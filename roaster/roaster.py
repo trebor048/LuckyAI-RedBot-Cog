@@ -19,12 +19,14 @@ from .utils import (
     format_messages_for_roast, format_messages_for_tldr,
     parse_debate_response, make_cooldown_message,
 )
+from .ai_service import PROVIDER_ENV_KEYS
 from .db import MessageDB
 from .ai_service import AIService, get_provider_by_model, get_actual_model_id
 from .settings_ui import SettingsView
 from .commands.roast_commands import RoastCommands
 from .commands.admin_commands import AdminCommands
 from .commands.prefix_commands import PrefixCommands
+from .commands.setup_wizard import SetupView, ensure_config_json
 from .listeners.message_listener import MessageListener
 
 log = logging.getLogger("red.RoasterCog")
@@ -98,6 +100,7 @@ class RoasterCog(commands.Cog):
         self.ai_service = AIService(self.bot, self.config)
 
         self.settings_sessions = {}
+        self.setup_sessions = {}
         self._session_counter = 0
         self.cooldowns = CooldownTracker()
 
@@ -134,6 +137,8 @@ class RoasterCog(commands.Cog):
 
     async def cog_load(self):
         await self.db.initialize()
+        config_path = os.path.join(self.config_file_parent, "config", "config.json")
+        ensure_config_json(config_path)
         self._load_models_data()
         persisted = await self.db.get_hot_take_enabled()
         if persisted is not None:
@@ -957,6 +962,40 @@ class RoasterCog(commands.Cog):
             log.error("STATS Error: %s", e)
             await ctx.send(":x: Failed to retrieve statistics.")
 
+    @commands.hybrid_command(name="setup", description="Interactive setup wizard for API keys and configuration")
+    @checks.admin_or_permissions(administrator=True)
+    async def setup(self, ctx: commands.Context):
+        await ctx.defer(ephemeral=True)
+        if not ctx.guild:
+            await ctx.send(":x: This command only works in servers.")
+            return
+
+        config_path = os.path.join(self.config_file_parent, "config", "config.json")
+        ensure_config_json(config_path)
+
+        self._session_counter += 1
+        session_id = str(self._session_counter)
+        api_keys = {}
+        for provider in PROVIDER_ORDER:
+            env_key = PROVIDER_ENV_KEYS.get(provider, "")
+            existing = os.getenv(env_key, "")
+            if existing:
+                api_keys[provider] = existing
+
+        self.setup_sessions[session_id] = {
+            "current_step": 0,
+            "api_keys": api_keys,
+            "configured_count": len(api_keys),
+            "skipped_count": 0,
+            "default_model": "nvidia/qwen/qwen3.5-122b-a10b",
+            "finished": False,
+            "test_results": [],
+        }
+
+        view = SetupView(self, session_id, ctx.author.id, str(ctx.guild.id))
+        embed = await view.build_embed()
+        await ctx.send(embed=embed, view=view, ephemeral=True)
+
     @commands.hybrid_command(name="help", description="Show help with all commands")
     async def help_command(self, ctx: commands.Context):
         await ctx.defer()
@@ -967,6 +1006,7 @@ class RoasterCog(commands.Cog):
         embed.add_field(name=":wrench: `/settings` (Admin)", value="Manage AI model, temperature, prompts, and message fetch settings.", inline=False)
         embed.add_field(name=":gear:️ `/config` (Admin)", value="Manage sync channels, blacklist, admin role, and toggle the bot.\nSubcommands: `channels add/remove/list`, `blacklist add/remove/list`, `admin_role`, `toggle`, `backfill`", inline=False)
         embed.add_field(name=":bar_chart: `/stats` (Admin)", value="View bot statistics and health.", inline=False)
+        embed.add_field(name=":rocket: `/setup` (Admin)", value="Interactive setup wizard for API keys and configuration.", inline=False)
         embed.add_field(name=":question: `/help`", value="Show this help message.", inline=False)
         embed.add_field(name="Prefix Commands", value="`;ask <question>` - Chat with AI\n`;debate` - Judge a debate\n`;htt on/off/fire` - Manage hot takes\n`;typeon`/`;typeoff` - Toggle typing indicator", inline=False)
         embed.set_footer(text="Roaster Bot - Powered by AI")

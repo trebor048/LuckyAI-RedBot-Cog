@@ -89,7 +89,16 @@ def get_provider_api_key(config_func, provider):
     if key:
         return key
     import os
-    return os.getenv(PROVIDER_ENV_KEYS.get(provider, ""), "")
+    key = os.getenv(PROVIDER_ENV_KEYS.get(provider, ""), "")
+    if key:
+        return key
+    try:
+        tokens = config_func.get_shared_api_tokens(provider)
+        if tokens:
+            return tokens.get("api_key", "")
+    except Exception:
+        pass
+    return ""
 
 
 class AIService:
@@ -107,15 +116,24 @@ class AIService:
             self._session = aiohttp.ClientSession()
         return self._session
 
-    def _get_api_key(self, provider):
+    async def _get_api_key(self, provider):
         env_key = PROVIDER_ENV_KEYS.get(provider)
         if not env_key:
             return ""
         import os
-        return os.getenv(env_key, "")
+        key = os.getenv(env_key, "")
+        if key:
+            return key
+        try:
+            tokens = await self.bot.get_shared_api_tokens(provider)
+            if tokens:
+                return tokens.get("api_key", "")
+        except Exception:
+            pass
+        return ""
 
-    def _build_headers(self, provider):
-        api_key = self._get_api_key(provider)
+    async def _build_headers(self, provider):
+        api_key = await self._get_api_key(provider)
         if not api_key:
             raise ValueError(f"No API key configured for {provider}")
         headers = {
@@ -149,7 +167,7 @@ class AIService:
 
         start = time.perf_counter()
         try:
-            headers = self._build_headers(provider)
+            headers = await self._build_headers(provider)
             body = {"model": fallback_model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
             session = await self._get_session()
             async with session.post(
@@ -176,7 +194,7 @@ class AIService:
         actual_model = get_actual_model_id(model, self._models_data)
 
         session = await self._get_session()
-        headers = self._build_headers(provider)
+        headers = await self._build_headers(provider)
         body = {**payload, "model": actual_model}
 
         last_error = None
@@ -237,7 +255,7 @@ class AIService:
     async def _try_fallback(self, payload, failed_provider, timeout):
         idx = PROVIDER_ORDER.index(failed_provider) if failed_provider in PROVIDER_ORDER else -1
         for provider in PROVIDER_ORDER[idx + 1:]:
-            api_key = self._get_api_key(provider)
+            api_key = await self._get_api_key(provider)
             if not api_key:
                 continue
             fallback_model = FALLBACK_DEFAULT_MODELS.get(provider)
@@ -245,7 +263,7 @@ class AIService:
                 continue
             base_url = PROVIDER_BASE_URLS.get(provider)
             session = await self._get_session()
-            headers = self._build_headers(provider)
+            headers = await self._build_headers(provider)
             body = {**payload, "model": fallback_model}
             try:
                 log.info("FALLBACK Trying %s with %s", provider, fallback_model)

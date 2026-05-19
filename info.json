@@ -3,7 +3,7 @@
     "name": "Roaster",
     "short": "AI-powered roasts, TLDRs, and message analysis for Discord",
     "description": "Full-featured Discord bot that syncs messages to SQLite and roasts users via multiple AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Z-AI, OpenRouter). Supports /roast, /tldr, ;ask, ;debate, hot takes, interactive settings UI, and per-guild configuration.",
-    "install_msg": "Thank you for installing Roaster! Use `[p]roaster` to view available commands. Set your API keys with `[p]set api openrouter <key>` etc., then configure models with `[p]roastersettings`.",
+    "install_msg": "Thank you for installing Roaster! Run `[p]setup` or `/setup` to launch the interactive setup wizard that will walk you through configuring API keys and testing endpoints step by step.",
     "requirements": [
         "aiohttp>=3.9.0",
         "aiosqlite>=0.19.0"
