@@ -1,0 +1,29 @@
+{
+    "author": ["Roaster Bot Contributors"],
+    "name": "Roaster",
+    "short": "AI-powered roasts, TLDRs, and message analysis for Discord",
+    "description": "Full-featured Discord bot that syncs messages to SQLite and roasts users via multiple AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Z-AI, OpenRouter). Supports /roast, /tldr, ;ask, ;debate, hot takes, interactive settings UI, and per-guild configuration.",
+    "install_msg": "Thank you for installing Roaster! Use `[p]roaster` to view available commands. Set your API keys with `[p]set api openrouter <key>` etc., then configure models with `[p]roastersettings`.",
+    "requirements": [
+        "aiohttp>=3.9.0",
+        "aiosqlite>=0.19.0"
+    ],
+    "min_bot_version": "3.5.0",
+    "max_bot_version": "3.6.0",
+    "end_user_data_statement": "This cog stores user messages for roasting and analysis purposes. Users can opt out via the /optout command. Stored data includes message content, author ID, and timestamps for channels explicitly configured by server admins.",
+    "permissions": [
+        "read_messages",
+        "send_messages",
+        "manage_messages",
+        "read_message_history",
+        "embed_links",
+        "attach_files"
+    ],
+    "tags": [
+        "roast",
+        "ai",
+        "fun",
+        "moderation",
+        "utility"
+    ]
+}
