@@ -1,6 +1,7 @@
 """
-Prefix commands module for RoasterCog.
-Handles: ;tldr, ;greentext, ;ask, ;debate, ;htt, ;typeon, ;typeoff
+Prefix commands module for LuckyAICog.
+All commands use the ;l prefix to avoid conflicts with other bots.
+Handles: ;lhelp, ;ltldr, ;lgreentext, ;lask, ;ldebate, ;lhtt, ;ltypeon, ;ltypeoff
 """
 
 import time
@@ -19,7 +20,7 @@ from ..utils import (
     AskError,
 )
 
-log = logging.getLogger("red.RoasterCog.prefix")
+log = logging.getLogger("red.LuckyAICog.prefix")
 
 TLDR_MIN_MESSAGES = 10
 MAX_MESSAGE_COUNT = 500
@@ -27,7 +28,7 @@ MAX_MESSAGE_COUNT = 500
 
 class PrefixCommands:
     """
-    Handles all prefix commands for the RoasterCog.
+    Handles all prefix commands for the LuckyAICog.
     Accepts cog instance to access helper methods and state.
     """
 
@@ -54,8 +55,14 @@ class PrefixCommands:
 
         content = message.content.strip()
 
-        # ;tldr and ;greentext - must come first (priority order matches original)
-        tldr_match = re.match(r"^;(tldr|greentext)\s+(\d+)$", content, re.IGNORECASE)
+        # ;lhelp
+        if content == ";lhelp":
+            ctx = await self.bot.get_context(message)
+            await self.cog.roasthelp(ctx)
+            return True
+
+        # ;ltldr and ;lgreentext
+        tldr_match = re.match(r"^;l(tldr|greentext)\s+(\d+)$", content, re.IGNORECASE)
         if tldr_match:
             async with self.config.guild(message.guild).all() as cfg:
                 if not cfg.get("enabled", True):
@@ -73,30 +80,30 @@ class PrefixCommands:
             await self._do_tldr(message, count, style)
             return True
 
-        # ;htt on/off/fire
-        htt_match = re.match(r"^;htt\s+(on|off|fire)$", content, re.IGNORECASE)
+        # ;lhtt on/off/fire
+        htt_match = re.match(r"^;lhtt\s+(on|off|fire)$", content, re.IGNORECASE)
         if htt_match:
             await self._do_htt(message)
             return True
 
-        # ;ask
-        if content.startswith(";ask "):
+        # ;lask
+        if content.startswith(";lask"):
             async with self.config.guild(message.guild).all() as cfg:
                 if not cfg.get("enabled", True):
                     return True
             await self._do_ask(message)
             return True
 
-        # ;debate
-        if content.startswith(";debate"):
+        # ;ldebate
+        if content.startswith(";ldebate"):
             async with self.config.guild(message.guild).all() as cfg:
                 if not cfg.get("enabled", True):
                     return True
             await self._do_debate(message)
             return True
 
-        # ;typeon / ;typeoff
-        if content in (";typeon", ";typeoff"):
+        # ;ltypeon / ;ltypeoff
+        if content in (";ltypeon", ";ltypeoff"):
             await self._do_typeonoff(message)
             return True
 
@@ -107,7 +114,7 @@ class PrefixCommands:
     # =========================================================================
 
     async def _do_tldr(self, message, count, style):
-        """Handle ;tldr N and ;greentext N commands with cooldown."""
+        """Handle ;ltldr N and ;lgreentext N commands with cooldown."""
         author_id = str(message.author.id)
         cooldown = self.cooldowns.check(author_id, 300000, "tldr")
         if cooldown["active"]:
@@ -178,11 +185,10 @@ class PrefixCommands:
             )
 
     # =========================================================================
-    # ;ask command
-    # =========================================================================
+    # ;lask command
 
     async def _do_ask(self, message):
-        """Handle ;ask command with cooldown, context, and image support."""
+        """Handle ;lask command with cooldown, context, and image support."""
         ctx = await self.bot.get_context(message)
         author_id = str(message.author.id)
         guild_id = str(message.guild.id)
@@ -207,7 +213,7 @@ class PrefixCommands:
         if not args and not has_image:
             await self._send_and_delete(
                 message.channel,
-                "Usage: `;ask <question>` or attach an image",
+                "Usage: `;lask <question>` or attach an image",
                 delete_after=6,
                 delete_original=message,
             )
@@ -302,11 +308,10 @@ class PrefixCommands:
             await self._log_command(guild_id, author_id, "ask", False)
 
     # =========================================================================
-    # ;debate command
-    # =========================================================================
+    # ;ldebate command
 
     async def _do_debate(self, message):
-        """Handle ;debate command with cooldown and participant validation."""
+        """Handle ;ldebate command with cooldown and participant validation."""
         ctx = await self.bot.get_context(message)
         author_id = str(message.author.id)
         guild_id = str(message.guild.id)
@@ -452,16 +457,15 @@ class PrefixCommands:
             await self._log_command(message.guild.id, message.author.id, "debate", False)
 
     # =========================================================================
-    # ;htt on/off/fire
-    # =========================================================================
+    # ;lhtt on/off/fire
 
     async def _do_htt(self, message):
-        """Handle ;htt on/off/fire commands. Admin only."""
+        """Handle ;lhtt on/off/fire commands. Admin only."""
         if not message.guild:
             return
 
         content = message.content.strip()
-        match = re.match(r"^;htt\s+(on|off|fire)$", content, re.IGNORECASE)
+        match = re.match(r"^;lhtt\s+(on|off|fire)$", content, re.IGNORECASE)
         if not match:
             return
 
@@ -555,16 +559,15 @@ class PrefixCommands:
                     pass
 
     # =========================================================================
-    # ;typeon and ;typeoff
-    # =========================================================================
+    # ;ltypeon and ;ltypeoff
 
     async def _do_typeonoff(self, message):
-        """Handle ;typeon and ;typeoff commands. Admin only."""
+        """Handle ;ltypeon and ;ltypeoff commands. Admin only."""
         if not message.guild:
             return
 
         content = message.content.strip()
-        if content not in (";typeon", ";typeoff"):
+        if content not in (";ltypeon", ";ltypeoff"):
             return
 
         # Admin check
@@ -579,7 +582,7 @@ class PrefixCommands:
             )
             return
 
-        enabled = content == ";typeon"
+        enabled = content == ";ltypeon"
 
         # Persist to guild config
         async with self.config.guild(message.guild).all() as cfg:

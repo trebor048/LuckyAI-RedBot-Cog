@@ -5,7 +5,7 @@ from ..settings_ui import SettingsView
 
 
 class AdminCommands:
-    """Helper class for admin-related logic (not a Cog - commands live in RoasterCog)."""
+    """Helper class for admin-related logic (not a Cog - commands live in LuckyAICog)."""
 
     def __init__(self, bot, config, db, ai_service, cog_instance):
         self.bot = bot

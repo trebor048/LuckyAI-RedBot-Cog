@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from .utils import generate_content_hash
 
-log = logging.getLogger("red.RoasterCog.db")
+log = logging.getLogger("red.LuckyAICog.db")
 
 
 class MessageDB:

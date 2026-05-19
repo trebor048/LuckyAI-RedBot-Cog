@@ -5,7 +5,7 @@ import logging
 
 import aiohttp
 
-log = logging.getLogger("red.RoasterCog.ai")
+log = logging.getLogger("red.LuckyAICog.ai")
 
 
 PROVIDER_ORDER = ["nvidia", "groq", "moonshot", "zai", "deepseek", "openrouter", "openai"]

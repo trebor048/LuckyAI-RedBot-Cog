@@ -8,7 +8,7 @@ from discord.ui import View, Modal, Button, TextInput
 
 from ..ai_service import PROVIDER_ORDER, PROVIDER_LABELS, PROVIDER_BASE_URLS, FALLBACK_DEFAULT_MODELS
 
-log = logging.getLogger("red.RoasterCog.setup")
+log = logging.getLogger("red.LuckyAICog.setup")
 
 SESSION_TIMEOUT = 900
 
@@ -318,9 +318,9 @@ class SetupView(View):
         embed = discord.Embed(color=0x0099ff)
 
         if step == 0:
-            embed.title = ":rocket: Roaster Bot Setup"
+            embed.title = ":rocket: Lucky AI Setup"
             embed.description = (
-                "Welcome to the Roaster Bot setup wizard!\n\n"
+                "Welcome to the Lucky AI setup wizard!\n\n"
                 "This will guide you through configuring AI provider API keys so the bot can "
                 "generate roasts, TLDRs, and answer questions.\n\n"
                 f"**Supported providers ({provider_count}):**\n" +
@@ -334,12 +334,15 @@ class SetupView(View):
             label = PROVIDER_LABELS.get(provider, provider)
             base_url = PROVIDER_BASE_URLS.get(provider, "")
             fallback = FALLBACK_DEFAULT_MODELS.get(provider, "")
+            existing_key = session.get("api_keys", {}).get(provider, "")
+            masked = existing_key[:6] + "..." + existing_key[-4:] if existing_key and len(existing_key) >= 10 else ""
             embed.title = f"Step {step}/{total} - {label}"
             embed.description = (
                 f"Configure your **{label}** API key.\n\n"
                 f"**Endpoint:** `{base_url}`\n"
-                f"**Default model:** `{fallback}`\n\n"
-                "Click **Enter Key** to provide your API key, "
+                f"**Default model:** `{fallback}`\n"
+                + (f"**Current key:** `{masked}`\n" if masked else "")
+                + "\nClick **Enter Key** to provide your API key, "
                 "or **Skip** this provider."
             )
             done = [p for p in PROVIDER_ORDER[:step]]
@@ -403,14 +406,15 @@ class SetupView(View):
             embed.add_field(
                 name="What's next?",
                 value=(
-                    "- Use `/settings` to tune model, temperature, and roast styles\n"
+                    "- Use `;lhelp` or `/roasthelp` to see all commands\n"
+                    "- Use `/settings` to change API keys, model, temperature, and styles\n"
                     "- Use `/config channels add #channel` to start syncing messages\n"
                     "- Use `/roast @user` to roast someone\n"
-                    "- Use `/tldr` to summarize chat"
+                    "- Use `/tldr` or `;ltldr 50` to summarize chat"
                 ),
                 inline=False,
             )
-            embed.set_footer(text="Roaster Bot is ready!")
+            embed.set_footer(text="Lucky AI is ready!")
         return embed
 
     async def refresh(self, interaction):
@@ -582,12 +586,13 @@ class FinishSetupButton(Button):
         session["finished"] = True
         self.cog.setup_sessions.pop(self.session_id, None)
         await interaction.response.edit_message(
-            content=":white_check_mark: **Setup complete!** Roaster Bot is ready to use.\n\n"
+            content=":white_check_mark: **Setup complete!** Lucky AI is ready to use.\n\n"
                     "Next steps:\n"
-                    "- `/settings` - Configure model, temperature, and roast styles\n"
+                    "- `;lhelp` or `/roasthelp` - See all commands\n"
+                    "- `/settings` - Change API keys, model, temperature, and styles\n"
                     "- `/config channels add #channel` - Start syncing messages\n"
                     "- `/roast @user` - Roast someone!\n"
-                    "- `/tldr` - Summarize chat",
+                    "- `/tldr` or `;ltldr 50` - Summarize chat",
             embed=None, view=None,
         )
 

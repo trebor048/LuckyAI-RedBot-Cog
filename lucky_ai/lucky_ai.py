@@ -29,7 +29,7 @@ from .commands.prefix_commands import PrefixCommands
 from .commands.setup_wizard import SetupView, ensure_config_json
 from .listeners.message_listener import MessageListener
 
-log = logging.getLogger("red.RoasterCog")
+log = logging.getLogger("red.LuckyAICog")
 
 TLDR_MIN_MESSAGES = 10
 MAX_MESSAGE_COUNT = 500
@@ -67,7 +67,7 @@ class CooldownTracker:
         self._cooldowns[f"{user_id}:{command_key}"] = (time.time() * 1000) + cooldown_ms
 
 
-class RoasterCog(commands.Cog):
+class LuckyAICog(commands.Cog):
     """AI-powered roast bot with message sync, TLDR, debate, ask, and hot take features."""
 
     def __init__(self, bot):
@@ -354,284 +354,7 @@ class RoasterCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
-    async def _do_tldr_prefix(self, message, count, style):
-        author_id = str(message.author.id)
-        cooldown = self.cooldowns.check(author_id, 300000, "tldr")
-        if cooldown["active"]:
-            msg = await message.channel.send(f":hourglass_flowing_sand: Wait {cooldown['remaining_sec']}s")
-            try:
-                await msg.delete(delay=5)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            return
-        try:
-            async with self.config.guild(message.guild).all() as cfg:
-                model = cfg.get("model", "nvidia/qwen/qwen3.5-122b-a10b")
-            messages = await self.db.get_channel_messages(str(message.channel.id), count)
-            if not messages:
-                await message.channel.send(":x: No messages found. The channel may not be synced yet.", delete_after=6)
-                return
-            conversation = format_messages_for_tldr(messages, style)
-            system_prompt = GREENTEXT_SYSTEM_PROMPT if style == "greentext" else TLDR_SYSTEM_PROMPT
-            header = f"The following are the last {len(messages)} messages from a Discord channel, ordered oldest to newest:\n\n"
-            suffix = "\n\nTurn this conversation into a 4chan greentext story." if style == "greentext" else "\n\nSummarize this conversation as a TL;DR."
-            user_prompt = header + conversation + suffix
-            payload = {
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 1.0 if style == "greentext" else 0.7,
-                "max_tokens": 2048 if style == "greentext" else 1024,
-            }
-            resp = await self.ai_service.execute_request(payload, model, context="TLDR", timeout=90)
-            text = sanitize_output(resp["choices"][0]["message"]["content"])
-            embed = discord.Embed(
-                color=COLORS["SUCCESS"] if style == "greentext" else COLORS["INFO"],
-                title="> Greentext" if style == "greentext" else "🧠 TL;DR Summary",
-                description=text[:4090] if len(text) > 4090 else text,
-            )
-            embed.set_footer(text=f"Requested by {message.author.name}")
-            await message.channel.send(embed=embed)
-            try:
-                await message.delete()
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            await self._log_command(message.guild.id, message.author.id, style if style == "greentext" else "tldr")
-        except Exception as e:
-            log.error("TLDR_PREFIX Error: %s", e)
-            await message.channel.send(f":x: Failed to generate TL;DR: {e}", delete_after=6)
 
-    async def _do_ask(self, message):
-        ctx = await self.bot.get_context(message)
-        author_id = str(message.author.id)
-        guild_id = str(message.guild.id)
-
-        is_admin = await self._require_admin(ctx)
-        cd_ms = 10000 if is_admin else 60000
-        cooldown = self.cooldowns.check(author_id, cd_ms, "ask")
-        if cooldown["active"]:
-            msg = await message.channel.send(f":hourglass_flowing_sand: Wait {cooldown['remaining_sec']}s")
-            try:
-                await msg.delete(delay=5)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            return
-
-        raw = message.content.strip()
-        args = raw[5:].strip()
-        attach = message.attachments[0] if message.attachments else None
-        has_image = attach and attach.content_type and attach.content_type.startswith("image/")
-        if not args and not has_image:
-            await message.channel.send("Usage: `;ask <question>` or attach an image", delete_after=6)
-            return
-        try:
-            await self._handle_typing(message.channel)
-            async with self.config.guild(message.guild).all() as cfg:
-                if not cfg.get("enabled", True):
-                    await message.channel.send(":x: Bot is disabled.", delete_after=5)
-                    return
-            bot_user_id = str(self.bot.user.id)
-            ctx_msgs = await self.db.get_channel_messages(str(message.channel.id), 25)
-            context_lines = []
-            for m in (ctx_msgs or []):
-                if str(m.get("id", "")) == str(message.id):
-                    continue
-                if m.get("author_id") == bot_user_id:
-                    continue
-                name = m.get("author_tag") or m.get("author_id", "Someone")
-                content = (m.get("content", "") or "")[:250]
-                context_lines.append(f"{name}: {content}")
-            ctx_text = "\n".join(context_lines[-25:])
-            user_name = message.author.display_name or message.author.name
-            if ctx_text:
-                prompt = f"Recent chat:\n{ctx_text}\n---\n{user_name}: {args or '[image]'}\n\nAnswer:"
-            else:
-                prompt = f"{user_name}: {args or '[image]'}\n\nAnswer:"
-            if has_image:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(attach.url) as resp:
-                        if resp.status == 200:
-                            buf = await resp.read()
-                            import base64
-                            b64 = base64.b64encode(buf).decode()
-                            mime = attach.content_type or "image/jpeg"
-                            content_parts = [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                            ]
-                            msgs = [{"role": "user", "content": content_parts}]
-                        else:
-                            msgs = [{"role": "user", "content": prompt}]
-            else:
-                msgs = [{"role": "user", "content": prompt}]
-            async with self.config.all() as gcfg:
-                model = gcfg.get("ask_vision_model") if has_image else gcfg.get("ask_model")
-            payload = {"messages": [{"role": "system", "content": ASK_SYSTEM_PROMPT}, *msgs], "temperature": 0.85, "max_tokens": 600}
-            resp = await self.ai_service.execute_request(payload, model, context="ASK", timeout=45, max_retries=2)
-            text = resp["choices"][0]["message"]["content"]
-            chunks = [text[i:i+1990] for i in range(0, len(text), 1990)] if len(text) > 1990 else [text]
-            for chunk in chunks:
-                await message.reply(chunk, allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                await message.delete()
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            await self._log_command(guild_id, author_id, "ask")
-        except Exception as e:
-            log.error("ASK Error: %s", e)
-            await message.channel.send(f":x: {e}", delete_after=8)
-            await self._log_command(guild_id, author_id, "ask", False)
-
-    async def _do_debate(self, message):
-        ctx = await self.bot.get_context(message)
-        author_id = str(message.author.id)
-        guild_id = str(message.guild.id)
-
-        is_admin = await self._require_admin(ctx)
-        cd_ms = 20000 if is_admin else 120000
-        cooldown = self.cooldowns.check(author_id, cd_ms, "debate")
-        if cooldown["active"]:
-            msg = await message.channel.send(f":hourglass_flowing_sand: Wait {cooldown['remaining_sec']}s")
-            try:
-                await msg.delete(delay=5)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            return
-
-        try:
-            msgs = await self.db.get_channel_messages(str(message.channel.id), 50)
-            if not msgs or len(msgs) < 2:
-                await message.channel.send("Thinking Nothing to debate here. Start an argument first.", delete_after=6)
-                return
-            opt_out_ids = await self.db.get_opt_out_user_ids(str(message.guild.id))
-            opt_set = set(opt_out_ids)
-            filtered = [m for m in msgs if m.get("author_id") not in opt_set]
-            if len(filtered) < 2:
-                await message.channel.send(":x: Not enough participants after filtering opt-outs.", delete_after=6)
-                return
-            participants = set()
-            ctx_text = ""
-            for m in filtered[-50:]:
-                name = m.get("author_tag") or m.get("author_id", "Someone")
-                content = (m.get("content", "") or "")[:300]
-                ctx_text += f"{name}: {content}\n"
-                participants.add(name)
-            if len(participants) < 2:
-                await message.channel.send(":rolling_eyes: You can't debate yourself. Grab a friend.", delete_after=6)
-                return
-            if len(participants) > 10:
-                await message.channel.send(":shrug: Too many cooks. Narrow it down to 2 sides.", delete_after=6)
-                return
-            await self._handle_typing(message.channel)
-            prompt = f"Recent chat:\n{ctx_text}\n\nJudge this debate:"
-            async with self.config.all() as gcfg:
-                model = gcfg.get("ask_model", "deepseek/deepseek-reasoner")
-            payload = {"messages": [{"role": "system", "content": DEBATE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}], "temperature": 0.85, "max_tokens": 800}
-            resp = await self.ai_service.execute_request(payload, model, context="DEBATE", timeout=45, max_retries=2)
-            text = resp["choices"][0]["message"]["content"]
-            parsed = parse_debate_response(text)
-            if not parsed.get("winner") or (not parsed.get("sideA") and not parsed.get("sideB")):
-                await message.channel.send(":thought_balloon: This isn't really a debate, just vibes. Pick a side and argue.", delete_after=6)
-                return
-            is_a_win = parsed.get("winner", "").upper().startswith("A")
-            embed = discord.Embed(
-                title=f"\u2696\uFE0F Debate: {parsed.get('topic', 'Conversation Analysis')}",
-                color=0x00ff00 if is_a_win else 0xff0000,
-            )
-            if parsed.get("sideA"):
-                parts = parsed["sideA"].split("\u2014\u2014", 1)
-                embed.add_field(name=f"\uD83C\uDFDB\uFE0F Side A: {parts[0].strip() if parts else ''}", value=parts[1].strip() if len(parts) > 1 else parsed["sideA"], inline=True)
-            if parsed.get("sideB"):
-                parts = parsed["sideB"].split("\u2014\u2014", 1)
-                embed.add_field(name=f"\uD83C\uDFDB\uFE0F Side B: {parts[0].strip() if parts else ''}", value=parts[1].strip() if len(parts) > 1 else parsed["sideB"], inline=True)
-            embed.add_field(name="\uD83C\uDFC6 Verdict", value=parsed.get("verdict", "Inconclusive"), inline=False)
-            embed.add_field(name="\uD83D\uDC80 Loser Take", value=parsed.get("loserTake", "No arguments found."), inline=False)
-            if parsed.get("score"):
-                embed.add_field(name="\uD83D\uDCCA Score", value=parsed["score"], inline=False)
-            embed.set_footer(text=f"Requested by {message.author.name}")
-            await message.reply(embed=embed, allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                await message.delete()
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            await self._log_command(message.guild.id, message.author.id, "debate")
-        except Exception as e:
-            log.error("DEBATE Error: %s", e)
-            await message.channel.send(":boom: Something broke. Try again.", delete_after=6)
-            await self._log_command(message.guild.id, message.author.id, "debate", False)
-
-    async def _do_htt(self, message):
-        if not message.guild:
-            return
-        content = message.content.strip()
-        match = re.match(r"^;htt\s+(on|off|fire)$", content, re.IGNORECASE)
-        if not match:
-            return
-        action = match.group(1).lower()
-        guild_id = str(message.guild.id)
-        user_id = str(message.author.id)
-
-        is_admin = await self._require_admin(await self.bot.get_context(message))
-        if not is_admin:
-            msg = await message.reply(":x: Admin only.", allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                await msg.delete(delay=3)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            return
-        if action == "on":
-            self.hot_take_enabled = True
-            await self.db.save_hot_take_enabled(True)
-            msg = await message.reply(":white_check_mark: Hot Takes enabled!", allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                await msg.delete(delay=3)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-        elif action == "off":
-            self.hot_take_enabled = False
-            await self.db.save_hot_take_enabled(False)
-            msg = await message.reply("🚫 Hot Takes disabled!", allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                await msg.delete(delay=3)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-        elif action == "fire":
-            channel_id = str(message.channel.id)
-            allowed = await self._get_hot_take_channels(guild_id)
-            if channel_id not in allowed:
-                msg = await message.reply(":x: This channel is not configured for hot takes.", allowed_mentions=discord.AllowedMentions(replied_user=False))
-                try:
-                    await msg.delete(delay=5)
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-                return
-            reply = await message.reply(":fire: Firing hot take...", allowed_mentions=discord.AllowedMentions(replied_user=False))
-            try:
-                ctx_msgs = await self.db.get_channel_messages(channel_id, self.hot_take_config["context_messages"])
-                if not ctx_msgs:
-                    await reply.edit(content=":x: No messages available for context.")
-                    return
-                conversation = self._format_hot_take_context(ctx_msgs)
-                async with self.config.guild(message.guild).all() as cfg:
-                    model = cfg.get("model", "nvidia/qwen/qwen3.5-122b-a10b")
-                payload = {
-                    "messages": [{"role": "user", "content": HOT_TAKE_PROMPT.format(conversation=conversation)}],
-                    "temperature": 0.9,
-                    "max_tokens": 500,
-                }
-                resp = await self.ai_service.execute_request(payload, model, context="HOT_TAKE")
-                text = sanitize_output(resp["choices"][0]["message"]["content"])
-                await reply.delete()
-                await message.channel.send(text)
-                self.hot_take_cooldowns[channel_id] = time.time() * 1000
-                await self.db.log_hot_take(guild_id, channel_id, text, len(ctx_msgs), model, 0)
-            except Exception as e:
-                try:
-                    await reply.edit(content=f":x: Failed to generate hot take: {e}")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
 
     @commands.hybrid_command(name="roast", description="Generate an AI roast for a user")
     @discord.app_commands.describe(user="User to roast", style="Optional style override")
@@ -996,19 +719,19 @@ class RoasterCog(commands.Cog):
         embed = await view.build_embed()
         await ctx.send(embed=embed, view=view, ephemeral=True)
 
-    @commands.hybrid_command(name="help", description="Show help with all commands")
-    async def help_command(self, ctx: commands.Context):
+    @commands.hybrid_command(name="roasthelp", aliases=["commands"], description="Show all Lucky AI commands")
+    async def roasthelp(self, ctx: commands.Context):
         await ctx.defer()
-        embed = discord.Embed(color=0x0099ff, title="🤖 Roaster Bot - Commands", description="AI-powered roasts, TL;DRs, and more. Use slash commands or prefix commands.")
+        embed = discord.Embed(color=0x0099ff, title="🤖 Lucky AI - Commands", description="AI-powered roasts, TL;DRs, and more. Use slash commands or prefix commands.")
         embed.add_field(name="🎯 `/roast @user`", value='Generate an AI roast for a user based on their message history.\nOptions: `style`: optional override', inline=False)
-        embed.add_field(name="🧠 `/tldr [messages] [style]`", value="Summarize the last N messages (10-500, default 200).\nStyle: `normal` or `greentext`\nPrefix: `;tldr 50` or `;greentext 50`", inline=False)
+        embed.add_field(name="🧠 `/tldr [messages] [style]`", value="Summarize the last N messages (10-500, default 200).\nStyle: `normal` or `greentext`\nPrefix: `;ltldr 50` or `;lgreentext 50`", inline=False)
         embed.add_field(name=":no_entry_sign: `/optout <in|out>`", value="Opt out of being roasted. You also cannot use roast commands while opted out.", inline=False)
         embed.add_field(name=":wrench: `/settings` (Admin)", value="Manage AI model, temperature, prompts, and message fetch settings.", inline=False)
         embed.add_field(name=":gear:️ `/config` (Admin)", value="Manage sync channels, blacklist, admin role, and toggle the bot.\nSubcommands: `channels add/remove/list`, `blacklist add/remove/list`, `admin_role`, `toggle`, `backfill`", inline=False)
         embed.add_field(name=":bar_chart: `/stats` (Admin)", value="View bot statistics and health.", inline=False)
         embed.add_field(name=":rocket: `/setup` (Admin)", value="Interactive setup wizard for API keys and configuration.", inline=False)
-        embed.add_field(name=":question: `/help`", value="Show this help message.", inline=False)
-        embed.add_field(name="Prefix Commands", value="`;ask <question>` - Chat with AI\n`;debate` - Judge a debate\n`;htt on/off/fire` - Manage hot takes\n`;typeon`/`;typeoff` - Toggle typing indicator", inline=False)
-        embed.set_footer(text="Roaster Bot - Powered by AI")
+        embed.add_field(name=":question: `/roasthelp`, `/commands`, or `;lhelp`", value="Show this help message.", inline=False)
+        embed.add_field(name="Prefix Commands (all start with `;l`)", value="`;lhelp` - Show this help\n`;lask <question>` - Chat with AI\n`;ldebate` - Judge a debate\n`;ltldr N` - TLDR last N messages\n`;lgreentext N` - Greentext summary\n`;lhtt on/off/fire` - Manage hot takes\n`;ltypeon`/`;ltypeoff` - Toggle typing indicator", inline=False)
+        embed.set_footer(text="Lucky AI - Powered by AI")
         embed.timestamp = discord.utils.utcnow()
         await ctx.send(embed=embed)

@@ -1,5 +1,5 @@
 class RoastCommands:
-    """Helper class for roast-related logic (not a Cog - commands live in RoasterCog)."""
+    """Helper class for roast-related logic (not a Cog - commands live in LuckyAICog)."""
 
     def __init__(self, bot, config, db, ai_service, cog_instance):
         self.bot = bot
@@ -29,7 +29,7 @@ class RoastCommands:
     # --- Helper logic ---
 
     async def get_roast_payload(self, ctx, user_id, target, style, model, message_fetch_mode, rand_mode, prompt_key):
-        """Build the AI payload for roasting. Called from RoasterCog.roast command."""
+        """Build the AI payload for roasting. Called from LuckyAICog.roast command."""
         from ..utils import format_messages_for_roast
         messages = await self.db.get_messages(user_id, 200, message_fetch_mode, str(ctx.guild.id))
         if not messages:
@@ -54,7 +54,7 @@ class RoastCommands:
         return payload, model
 
     async def get_tldr_payload(self, ctx, count, style, model):
-        """Build the AI payload for TLDR. Called from RoasterCog.tldr command."""
+        """Build the AI payload for TLDR. Called from LuckyAICog.tldr command."""
         from ..utils import TLDR_SYSTEM_PROMPT, GREENTEXT_SYSTEM_PROMPT, format_messages_for_tldr
         raw_messages = await self.db.get_channel_messages(str(ctx.channel.id), count)
         if not raw_messages:

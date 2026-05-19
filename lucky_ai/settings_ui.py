@@ -8,16 +8,23 @@ import discord
 from discord.ui import View, Modal, Select, Button, TextInput
 from redbot.core import commands
 
-from .ai_service import PROVIDER_ORDER
+from .ai_service import PROVIDER_ORDER, PROVIDER_ENV_KEYS, PROVIDER_BASE_URLS
 from .utils import PROVIDER_LABELS
 
-log = logging.getLogger("red.RoasterCog.settings_ui")
+log = logging.getLogger("red.LuckyAICog.settings_ui")
 
-PAGE_ORDER = ["model", "parameters", "fetch", "endpoints", "advanced"]
+
+def _mask_key(key):
+    if not key or len(key) < 10:
+        return None
+    return key[:6] + "..." + key[-4:]
+
+PAGE_ORDER = ["model", "parameters", "apikeys", "fetch", "endpoints", "advanced"]
 
 PAGE_TITLES = {
     "model": ("Model Selection", "🤖"),
     "parameters": ("Generation Parameters", ":gear:️"),
+    "apikeys": ("API Keys", ":key:"),
     "fetch": ("Message Fetching", "📨"),
     "endpoints": ("Test Endpoints", "🔍"),
     "advanced": ("Advanced Settings", ":wrench:"),
@@ -189,6 +196,8 @@ class SettingsView(View):
             self._add_model_components()
         elif page == "parameters":
             self._add_parameter_components()
+        elif page == "apikeys":
+            self._add_apikeys_components()
         elif page == "fetch":
             self._add_fetch_components()
         elif page == "endpoints":
@@ -227,6 +236,10 @@ class SettingsView(View):
             self.add_item(PromptPageButton("◀ Styles", "prev", self.session_id, self.cog, self.user_id))
             self.add_item(PromptPageButton("Styles ▶", "next", self.session_id, self.cog, self.user_id))
 
+    def _add_apikeys_components(self):
+        for provider in PROVIDER_ORDER:
+            self.add_item(ApiKeyButton(provider, self.session_id, self.cog, self.user_id))
+
     def _add_fetch_components(self):
         self.add_item(FetchModeSelect(self.session_id, self.cog, self.user_id))
         self.add_item(ToggleRandomButton(self.session_id, self.cog, self.user_id))
@@ -254,6 +267,8 @@ class SettingsView(View):
                 await self._build_parameter_embed(embed, cfg)
             elif page_key == "fetch":
                 await self._build_fetch_embed(embed, cfg)
+            elif page_key == "apikeys":
+                await self._build_apikeys_embed(embed)
             elif page_key == "endpoints":
                 await self._build_endpoints_embed(embed)
             elif page_key == "advanced":
@@ -295,12 +310,31 @@ class SettingsView(View):
             inline=False,
         )
 
+    async def _build_apikeys_embed(self, embed):
+        embed.color = 0xf59e0b
+        embed.description = "Click a provider below to **set, change, or remove** its API key.\nKeys are stored securely via Red's API token system."
+        lines = []
+        for p in PROVIDER_ORDER:
+            tokens = await self.cog.bot.get_shared_api_tokens(p)
+            full_key = tokens.get("api_key", "") if tokens else ""
+            has_key = bool(full_key)
+            masked = _mask_key(full_key) if has_key else ""
+            icon = ":white_check_mark:" if has_key else ":x:"
+            label = PROVIDER_LABELS.get(p, p)
+            parts = [f"{icon} **{label}**"]
+            if masked:
+                parts.append(f"`{masked}`")
+            lines.append(" ".join(parts))
+        embed.add_field(name="Provider Status", value="\n".join(lines), inline=False)
+        embed.add_field(name=":key: Quick Actions", value="Configured keys are tested automatically.\nUse the **Endpoints** page to verify they work.", inline=False)
+        embed.set_footer(text="API keys are stored in Red's shared API token storage")
+
     async def _build_endpoints_embed(self, embed):
         embed.color = 0x40a7d6
         embed.description = 'Click **"Test All Endpoints"** below to verify your API keys are working.'
         embed.add_field(
             name="🧪 Available Providers",
-            value=" • ".join(p.capitalize() for p in PROVIDER_ORDER),
+            value=" - ".join(p.capitalize() for p in PROVIDER_ORDER),
             inline=False,
         )
         embed.add_field(name="📡 Test Status", value=":hourglass_flowing_sand: Click the button to begin testing", inline=False)
@@ -536,6 +570,55 @@ class ParamButton(Button):
         async with self._cog.config.guild_from_id(guild_id).all() as cfg:
             current = cfg.get(info["key"], info.get("min", 0))
         modal = ParamModal(info["label"], info["min"], info["max"], current, info["key"], self._session_id, self._cog)
+        await interaction.response.send_modal(modal)
+
+
+class ApiKeySetModal(Modal):
+    def __init__(self, provider, label, session_id, cog):
+        super().__init__(title=f"{label} API Key", timeout=300)
+        self.provider = provider
+        self.session_id = session_id
+        self.cog = cog
+        self.add_item(
+            TextInput(
+                label=f"{label} API Key",
+                placeholder="Paste your API key, or leave empty to clear it",
+                required=False,
+                max_length=256,
+                style=discord.TextStyle.short,
+            )
+        )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        key = self.children[0].value.strip()
+        session = self.cog.settings_sessions.get(self.session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired. Reopen /settings.", ephemeral=True)
+            return
+        if key:
+            await interaction.client.set_shared_api_tokens(self.provider, api_key=key)
+            text = f":white_check_mark: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key saved!"
+        else:
+            await interaction.client.set_shared_api_tokens(self.provider, api_key="")
+            text = f":wastebasket: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key cleared."
+        log.info("SETTINGS_UI API key updated for %s", self.provider)
+        guild_id = interaction.guild_id
+        view = SettingsView(self.cog, self.session_id, interaction.user.id, guild_id)
+        embed = await view.build_embed()
+        await interaction.response.edit_message(content=text, embed=embed, view=view)
+
+
+class ApiKeyButton(Button):
+    def __init__(self, provider, session_id, cog, user_id):
+        label = PROVIDER_LABELS.get(provider, provider)
+        super().__init__(label=label, style=discord.ButtonStyle.primary, custom_id=f"settings_apikey_{provider}_{session_id}")
+        self.provider = provider
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        modal = ApiKeySetModal(self.provider, PROVIDER_LABELS.get(self.provider, self.provider), self._session_id, self._cog)
         await interaction.response.send_modal(modal)
 
 
