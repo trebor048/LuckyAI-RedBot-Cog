@@ -624,7 +624,7 @@ class ApiKeyButton(Button):
 
 class TogglePromptDropdownButton(Button):
     def __init__(self, session_id, cog, user_id):
-        super().__init__(label=":memo: Style", style=discord.ButtonStyle.primary, custom_id=f"settings_toggle_prompt_{session_id}")
+        super().__init__(label="\U0001f4dd Style", style=discord.ButtonStyle.primary, custom_id=f"settings_toggle_prompt_{session_id}")
         self._session_id = session_id
         self._cog = cog
         self._user_id = user_id

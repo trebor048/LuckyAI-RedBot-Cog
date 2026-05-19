@@ -116,7 +116,7 @@ class AIService:
             self._session = aiohttp.ClientSession()
         return self._session
 
-    async def _get_api_key(self, provider):
+    def _get_api_key(self, provider):
         env_key = PROVIDER_ENV_KEYS.get(provider)
         if not env_key:
             return ""
@@ -125,7 +125,7 @@ class AIService:
         if key:
             return key
         try:
-            tokens = await self.bot.get_shared_api_tokens(provider)
+            tokens = self.bot.get_shared_api_tokens(provider)
             if tokens:
                 return tokens.get("api_key", "")
         except Exception:
@@ -133,7 +133,7 @@ class AIService:
         return ""
 
     async def _build_headers(self, provider):
-        api_key = await self._get_api_key(provider)
+        api_key = self._get_api_key(provider)
         if not api_key:
             raise ValueError(f"No API key configured for {provider}")
         headers = {
@@ -159,6 +159,7 @@ class AIService:
         api_key = self._get_api_key(provider)
         base_url = PROVIDER_BASE_URLS.get(provider)
         fallback_model = FALLBACK_DEFAULT_MODELS.get(provider)
+        actual_model = get_actual_model_id(fallback_model, self._models_data)
 
         if not api_key:
             return {"name": PROVIDER_LABELS.get(provider, provider), "status": "not_configured", "latency": None, "message": "No API key found"}
@@ -168,7 +169,7 @@ class AIService:
         start = time.perf_counter()
         try:
             headers = await self._build_headers(provider)
-            body = {"model": fallback_model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
+            body = {"model": actual_model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
             session = await self._get_session()
             async with session.post(
                 f"{base_url}/chat/completions", json=body, headers=headers,
@@ -255,7 +256,7 @@ class AIService:
     async def _try_fallback(self, payload, failed_provider, timeout):
         idx = PROVIDER_ORDER.index(failed_provider) if failed_provider in PROVIDER_ORDER else -1
         for provider in PROVIDER_ORDER[idx + 1:]:
-            api_key = await self._get_api_key(provider)
+            api_key = self._get_api_key(provider)
             if not api_key:
                 continue
             fallback_model = FALLBACK_DEFAULT_MODELS.get(provider)

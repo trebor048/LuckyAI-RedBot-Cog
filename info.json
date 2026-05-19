@@ -3,7 +3,7 @@
     "name": "lucky-ai",
     "short": "AI-powered roasts, TLDRs, message analysis, and debate judge for Discord",
     "description": "Full-featured Discord AI cog that syncs messages to SQLite and delivers AI-powered roasts, TLDR summaries, greentext recaps, chat Q&A, debate judging, hot takes, and message analysis. Supports 7 AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Z-AI, OpenRouter) with automatic fallback. Interactive settings UI, per-guild configuration, cooldowns, opt-out, and blacklist support.",
-    "install_msg": "Thank you for installing Lucky AI! Run `[p]setup` or `/setup` to launch the interactive setup wizard that will walk you through configuring API keys and testing endpoints step by step.",
+    "install_msg": "Thanks for installing Lucky AI! Run `[p]lsetup` to launch the interactive setup wizard that walks you through API keys and testing. Type `[p]lhelp` to see all commands. All commands use the `;l` prefix.",
     "requirements": [
         "aiohttp>=3.9.0",
         "aiosqlite>=0.19.0"

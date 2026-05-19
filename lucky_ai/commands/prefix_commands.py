@@ -58,7 +58,7 @@ class PrefixCommands:
         # ;lhelp
         if content == ";lhelp":
             ctx = await self.bot.get_context(message)
-            await self.cog.roasthelp(ctx)
+            await self.cog.lhelp(ctx)
             return True
 
         # ;ltldr and ;lgreentext

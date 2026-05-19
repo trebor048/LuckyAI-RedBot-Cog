@@ -243,7 +243,7 @@ class ModelPickSelect(discord.ui.Select):
 
 class SkipModelButton(Button):
     def __init__(self, session_id, cog, user_id, guild_id):
-        super().__init__(label=":fast_forward: Keep Default", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_model_{session_id}")
+        super().__init__(label="\u23e9 Keep Default", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_model_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -406,7 +406,7 @@ class SetupView(View):
             embed.add_field(
                 name="What's next?",
                 value=(
-                    "- Use `;lhelp` or `/roasthelp` to see all commands\n"
+                    "- Use `;lhelp` to see all commands\n"
                     "- Use `/settings` to change API keys, model, temperature, and styles\n"
                     "- Use `/config channels add #channel` to start syncing messages\n"
                     "- Use `/roast @user` to roast someone\n"
@@ -431,7 +431,7 @@ class SetupView(View):
 
 class StartSetupButton(Button):
     def __init__(self, session_id, cog, user_id):
-        super().__init__(label=":rocket: Start Setup", style=discord.ButtonStyle.success, custom_id=f"setup_start_{session_id}")
+        super().__init__(label="\U0001f680 Start Setup", style=discord.ButtonStyle.success, custom_id=f"setup_start_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -449,7 +449,7 @@ class StartSetupButton(Button):
 
 class EnterKeyButton(Button):
     def __init__(self, provider, label, session_id, cog, user_id):
-        super().__init__(label=":key: Enter Key", style=discord.ButtonStyle.primary, custom_id=f"setup_key_{provider}_{session_id}")
+        super().__init__(label="\U0001f511 Enter Key", style=discord.ButtonStyle.primary, custom_id=f"setup_key_{provider}_{session_id}")
         self.provider = provider
         self.label = label
         self.session_id = session_id
@@ -463,7 +463,7 @@ class EnterKeyButton(Button):
 
 class SkipKeyButton(Button):
     def __init__(self, provider, session_id, cog, user_id):
-        super().__init__(label=":fast_forward: Skip", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_{provider}_{session_id}")
+        super().__init__(label="\u23e9 Skip", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_{provider}_{session_id}")
         self.provider = provider
         self.session_id = session_id
         self.cog = cog
@@ -498,7 +498,7 @@ class CancelSetupButton(Button):
 
 class ChooseModelButton(Button):
     def __init__(self, session_id, cog, user_id, guild_id):
-        super().__init__(label=":robot: Choose Model", style=discord.ButtonStyle.primary, custom_id=f"setup_choose_model_{session_id}")
+        super().__init__(label="\U0001f916 Choose Model", style=discord.ButtonStyle.primary, custom_id=f"setup_choose_model_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -512,7 +512,7 @@ class ChooseModelButton(Button):
 
 class SaveAndTestButton(Button):
     def __init__(self, session_id, cog, user_id):
-        super().__init__(label=":white_check_mark: Save & Test Endpoints", style=discord.ButtonStyle.success, custom_id=f"setup_test_{session_id}")
+        super().__init__(label="\u2705 Save & Test Endpoints", style=discord.ButtonStyle.success, custom_id=f"setup_test_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -549,7 +549,7 @@ class SaveAndTestButton(Button):
 
 class SkipTestButton(Button):
     def __init__(self, session_id, cog, user_id):
-        super().__init__(label=":fast_forward: Skip Testing", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_test_{session_id}")
+        super().__init__(label="\u23e9 Skip Testing", style=discord.ButtonStyle.secondary, custom_id=f"setup_skip_test_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -573,7 +573,7 @@ class SkipTestButton(Button):
 
 class FinishSetupButton(Button):
     def __init__(self, session_id, cog, user_id):
-        super().__init__(label=":white_check_mark: Finish", style=discord.ButtonStyle.success, custom_id=f"setup_finish_{session_id}")
+        super().__init__(label="\u2705 Finish", style=discord.ButtonStyle.success, custom_id=f"setup_finish_{session_id}")
         self.session_id = session_id
         self.cog = cog
         self.user_id = user_id
@@ -588,7 +588,7 @@ class FinishSetupButton(Button):
         await interaction.response.edit_message(
             content=":white_check_mark: **Setup complete!** Lucky AI is ready to use.\n\n"
                     "Next steps:\n"
-                    "- `;lhelp` or `/roasthelp` - See all commands\n"
+                    "- `;lhelp` - See all commands\n"
                     "- `/settings` - Change API keys, model, temperature, and styles\n"
                     "- `/config channels add #channel` - Start syncing messages\n"
                     "- `/roast @user` - Roast someone!\n"

@@ -25,7 +25,6 @@ from .ai_service import AIService, get_provider_by_model, get_actual_model_id
 from .settings_ui import SettingsView
 from .commands.roast_commands import RoastCommands
 from .commands.admin_commands import AdminCommands
-from .commands.prefix_commands import PrefixCommands
 from .commands.setup_wizard import SetupView, ensure_config_json
 from .listeners.message_listener import MessageListener
 
@@ -123,8 +122,7 @@ class LuckyAICog(commands.Cog):
         # Instantiate helper classes (logic modules, not Cogs)
         self.roast_cmds = RoastCommands(self.bot, self.config, self.db, self.ai_service, self)
         self.admin_cmds = AdminCommands(self.bot, self.config, self.db, self.ai_service, self)
-        self.prefix_cmds = PrefixCommands(self.bot, self.config, self.db, self.ai_service, self)
-        # MessageListener handles message sync, hot-takes, and prefix command routing
+        # MessageListener handles message sync and hot-takes
         self.msg_listener = MessageListener(self.bot, self.db, self.config)
         self.msg_listener.configure_hot_take(
             self.hot_take_enabled,
@@ -149,6 +147,9 @@ class LuckyAICog(commands.Cog):
                 self.msg_listener.hot_take_loop.start(self.ai_service)
             except RuntimeError:
                 pass  # Already running
+        log.info(
+            "Lucky AI loaded. Run `;lsetup` to configure API keys, `;lhelp` for commands."
+        )
 
     async def cog_unload(self):
         # Stop hot_take_loop if running
@@ -320,10 +321,6 @@ class LuckyAICog(commands.Cog):
         channel_id = str(message.channel.id)
         author_id = str(message.author.id)
 
-        handled = await self._handle_prefix_commands(message)
-        if handled:
-            return
-
         async with self.config.guild(message.guild).all() as cfg:
             sync_channels = cfg.get("sync_channels", [])
 
@@ -340,10 +337,6 @@ class LuckyAICog(commands.Cog):
 
         await self._maybe_fire_hot_take(message)
 
-    async def _handle_prefix_commands(self, message):
-        """Delegate prefix command handling to PrefixCommands helper."""
-        return await self.prefix_cmds.handle_message(message)
-
     async def _auto_delete(self, cmd_msg, resp_msg, delay=5):
         try:
             await cmd_msg.delete()
@@ -356,9 +349,8 @@ class LuckyAICog(commands.Cog):
 
 
 
-    @commands.hybrid_command(name="roast", description="Generate an AI roast for a user")
-    @discord.app_commands.describe(user="User to roast", style="Optional style override")
-    async def roast(self, ctx: commands.Context, user: discord.User = None, *, style: str = None):
+    @commands.command(name="lroast")
+    async def lroast(self, ctx: commands.Context, user: discord.User = None, *, style: str = None):
         await ctx.defer()
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
@@ -436,9 +428,8 @@ class LuckyAICog(commands.Cog):
             await ctx.send(f":x: Failed to generate roast: {e}")
             await self._log_command(guild_id, ctx.author.id, "roast", False)
 
-    @commands.hybrid_command(name="tldr", description="Summarize recent channel messages")
-    @discord.app_commands.describe(messages="Number of messages (10-500, default 200)", style="Summary style: normal or greentext")
-    async def tldr(self, ctx: commands.Context, messages: int = 200, style: str = "normal"):
+    @commands.command(name="ltldr")
+    async def ltldr(self, ctx: commands.Context, messages: int = 200, style: str = "normal"):
         await ctx.defer()
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
@@ -490,9 +481,8 @@ class LuckyAICog(commands.Cog):
             await ctx.send(f":x: Failed to generate TL;DR: {e}")
             await self._log_command(ctx.guild.id, ctx.author.id, "tldr", False)
 
-    @commands.hybrid_command(name="optout", description="Opt in or out of being roasted")
-    @discord.app_commands.describe(action="'out' to opt out, 'in' to opt back in")
-    async def optout(self, ctx: commands.Context, action: str):
+    @commands.command(name="loptout")
+    async def loptout(self, ctx: commands.Context, action: str):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
@@ -505,27 +495,26 @@ class LuckyAICog(commands.Cog):
         status = "opted out" if opted else "opted in"
         await ctx.send(f":white_check_mark: You have {status} of roasting.")
 
-    @commands.hybrid_command(name="settings", description="Open interactive settings UI (Admin)")
+    @commands.command(name="lsettings")
     @checks.admin_or_permissions(administrator=True)
-    async def settings(self, ctx: commands.Context):
+    async def lsettings(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
             return
         await self.admin_cmds.open_settings(ctx)
 
-    @commands.group(name="config", aliases=["cfg"])
+    @commands.group(name="lconfig", aliases=["lcfg"])
     @checks.admin_or_permissions(administrator=True)
-    async def config(self, ctx: commands.Context):
+    async def lconfig(self, ctx: commands.Context):
         pass
 
-    @config.group(name="channels")
-    async def config_channels(self, ctx: commands.Context):
+    @lconfig.group(name="channels")
+    async def lconfig_channels(self, ctx: commands.Context):
         pass
 
-    @config_channels.command(name="add")
-    @discord.app_commands.describe(channel="Channel to add for sync")
-    async def config_channels_add(self, ctx: commands.Context, channel: discord.TextChannel):
+    @lconfig_channels.command(name="add")
+    async def lconfig_channels_add(self, ctx: commands.Context, channel: discord.TextChannel):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -546,9 +535,8 @@ class LuckyAICog(commands.Cog):
         await ctx.send(f":white_check_mark: Added {channel.mention} as a sync channel. Starting initial backfill...")
         asyncio.create_task(self._do_backfill(ctx.guild, channel, 14, ctx.author))
 
-    @config_channels.command(name="remove")
-    @discord.app_commands.describe(channel="Channel to remove from sync")
-    async def config_channels_remove(self, ctx: commands.Context, channel: discord.TextChannel):
+    @lconfig_channels.command(name="remove")
+    async def lconfig_channels_remove(self, ctx: commands.Context, channel: discord.TextChannel):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -564,8 +552,8 @@ class LuckyAICog(commands.Cog):
         deleted = await self.db.delete_channel_messages(str(ctx.guild.id), channel_id)
         await ctx.send(f":white_check_mark: Removed {channel.mention} from sync channels ({deleted} messages deleted).")
 
-    @config_channels.command(name="list")
-    async def config_channels_list(self, ctx: commands.Context):
+    @lconfig_channels.command(name="list")
+    async def lconfig_channels_list(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -578,30 +566,28 @@ class LuckyAICog(commands.Cog):
         embed = discord.Embed(title=":clipboard: Sync Channels", color=0x0099ff, description="\n".join(lines))
         await ctx.send(embed=embed, ephemeral=True)
 
-    @config.group(name="blacklist")
-    async def config_blacklist(self, ctx: commands.Context):
+    @lconfig.group(name="blacklist")
+    async def lconfig_blacklist(self, ctx: commands.Context):
         pass
 
-    @config_blacklist.command(name="add")
-    @discord.app_commands.describe(user="User to blacklist")
-    async def config_blacklist_add(self, ctx: commands.Context, user: discord.User):
+    @lconfig_blacklist.command(name="add")
+    async def lconfig_blacklist_add(self, ctx: commands.Context, user: discord.User):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
         await self.db.add_to_blacklist(str(ctx.guild.id), str(user.id), str(ctx.author.id))
         await ctx.send(f":white_check_mark: Added {user.mention} to the blacklist.")
 
-    @config_blacklist.command(name="remove")
-    @discord.app_commands.describe(user="User to remove from blacklist")
-    async def config_blacklist_remove(self, ctx: commands.Context, user: discord.User):
+    @lconfig_blacklist.command(name="remove")
+    async def lconfig_blacklist_remove(self, ctx: commands.Context, user: discord.User):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
         await self.db.remove_from_blacklist(str(ctx.guild.id), str(user.id))
         await ctx.send(f":white_check_mark: Removed {user.mention} from the blacklist.")
 
-    @config_blacklist.command(name="list")
-    async def config_blacklist_list(self, ctx: commands.Context):
+    @lconfig_blacklist.command(name="list")
+    async def lconfig_blacklist_list(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -613,9 +599,8 @@ class LuckyAICog(commands.Cog):
         embed = discord.Embed(title=":clipboard: Blacklisted Users", color=0x0099ff, description="\n".join(lines))
         await ctx.send(embed=embed, ephemeral=True)
 
-    @config.command(name="admin_role")
-    @discord.app_commands.describe(role="Role to set as admin (omit to clear)")
-    async def config_admin_role(self, ctx: commands.Context, role: discord.Role = None):
+    @lconfig.command(name="admin_role")
+    async def lconfig_admin_role(self, ctx: commands.Context, role: discord.Role = None):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -624,9 +609,8 @@ class LuckyAICog(commands.Cog):
         text = role.mention if role else "server administrators only"
         await ctx.send(f":white_check_mark: Admin role set to {text}.")
 
-    @config.command(name="toggle")
-    @discord.app_commands.describe(enabled="Enable or disable the bot")
-    async def config_toggle(self, ctx: commands.Context, enabled: bool):
+    @lconfig.command(name="toggle")
+    async def lconfig_toggle(self, ctx: commands.Context, enabled: bool):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -634,9 +618,8 @@ class LuckyAICog(commands.Cog):
             cfg["enabled"] = enabled
         await ctx.send(f":white_check_mark: Bot {'enabled' if enabled else 'disabled'} for this server.")
 
-    @config.command(name="backfill")
-    @discord.app_commands.describe(channel="Channel to backfill (default: current)", days="Days to backfill (omit for full)")
-    async def config_backfill(self, ctx: commands.Context, channel: discord.TextChannel = None, days: int = None):
+    @lconfig.command(name="backfill")
+    async def lconfig_backfill(self, ctx: commands.Context, channel: discord.TextChannel = None, days: int = None):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -668,9 +651,9 @@ class LuckyAICog(commands.Cog):
         except Exception as e:
             log.error("BACKFILL Error for %s: %s", channel_id, e)
 
-    @commands.hybrid_command(name="stats", description="Show bot statistics (Admin)")
+    @commands.command(name="lstats")
     @checks.admin_or_permissions(administrator=True)
-    async def stats(self, ctx: commands.Context):
+    async def lstats(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             return
@@ -685,9 +668,9 @@ class LuckyAICog(commands.Cog):
             log.error("STATS Error: %s", e)
             await ctx.send(":x: Failed to retrieve statistics.")
 
-    @commands.hybrid_command(name="setup", description="Interactive setup wizard for API keys and configuration")
+    @commands.command(name="lsetup")
     @checks.admin_or_permissions(administrator=True)
-    async def setup(self, ctx: commands.Context):
+    async def lsetup(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
@@ -719,19 +702,219 @@ class LuckyAICog(commands.Cog):
         embed = await view.build_embed()
         await ctx.send(embed=embed, view=view, ephemeral=True)
 
-    @commands.hybrid_command(name="roasthelp", aliases=["commands"], description="Show all Lucky AI commands")
-    async def roasthelp(self, ctx: commands.Context):
-        await ctx.defer()
-        embed = discord.Embed(color=0x0099ff, title="🤖 Lucky AI - Commands", description="AI-powered roasts, TL;DRs, and more. Use slash commands or prefix commands.")
-        embed.add_field(name="🎯 `/roast @user`", value='Generate an AI roast for a user based on their message history.\nOptions: `style`: optional override', inline=False)
-        embed.add_field(name="🧠 `/tldr [messages] [style]`", value="Summarize the last N messages (10-500, default 200).\nStyle: `normal` or `greentext`\nPrefix: `;ltldr 50` or `;lgreentext 50`", inline=False)
-        embed.add_field(name=":no_entry_sign: `/optout <in|out>`", value="Opt out of being roasted. You also cannot use roast commands while opted out.", inline=False)
-        embed.add_field(name=":wrench: `/settings` (Admin)", value="Manage AI model, temperature, prompts, and message fetch settings.", inline=False)
-        embed.add_field(name=":gear:️ `/config` (Admin)", value="Manage sync channels, blacklist, admin role, and toggle the bot.\nSubcommands: `channels add/remove/list`, `blacklist add/remove/list`, `admin_role`, `toggle`, `backfill`", inline=False)
-        embed.add_field(name=":bar_chart: `/stats` (Admin)", value="View bot statistics and health.", inline=False)
-        embed.add_field(name=":rocket: `/setup` (Admin)", value="Interactive setup wizard for API keys and configuration.", inline=False)
-        embed.add_field(name=":question: `/roasthelp`, `/commands`, or `;lhelp`", value="Show this help message.", inline=False)
-        embed.add_field(name="Prefix Commands (all start with `;l`)", value="`;lhelp` - Show this help\n`;lask <question>` - Chat with AI\n`;ldebate` - Judge a debate\n`;ltldr N` - TLDR last N messages\n`;lgreentext N` - Greentext summary\n`;lhtt on/off/fire` - Manage hot takes\n`;ltypeon`/`;ltypeoff` - Toggle typing indicator", inline=False)
+    @commands.command(name="lhelp", aliases=["lcommands"])
+    async def lhelp(self, ctx: commands.Context):
+        embed = discord.Embed(color=0x0099ff, title="\U0001f916 Lucky AI - Commands", description="AI-powered roasts, TL;DRs, and more. All commands use the `;l` prefix.")
+        embed.add_field(name="\U0001f3af `;lroast @user`", value='Generate an AI roast based on message history.\nOptions: `style`: optional override', inline=False)
+        embed.add_field(name="\U0001f9e0 `;ltldr [count] [style]`", value="Summarize the last N messages (10-500).\nStyle: `normal` or `greentext`\nAlias: `;lgreentext N`", inline=False)
+        embed.add_field(name=":no_entry_sign: `;loptout <in|out>`", value="Opt in or out of being roasted.", inline=False)
+        embed.add_field(name=":wrench: `;lsettings` (Admin)", value="Interactive UI for model, temperature, API keys, and styles.", inline=False)
+        embed.add_field(name=":gear: `;lconfig` (Admin)", value="Manage sync channels, blacklist, admin role, toggle, backfill.\nSubcommands: `channels add/remove/list`, `blacklist add/remove/list`, `admin_role`, `toggle`, `backfill`", inline=False)
+        embed.add_field(name="\U0001f4ca `;lstats` (Admin)", value="View bot statistics and health.", inline=False)
+        embed.add_field(name="\U0001f680 `;lsetup` (Admin)", value="Interactive setup wizard for API keys and configuration.", inline=False)
+        embed.add_field(name=":question: `;lhelp`", value="Show this help message.", inline=False)
+        embed.add_field(name="More Commands", value="`;lask <question>` - Chat with AI\n`;ldebate` - Judge a debate\n`;lhtt on/off/fire` - Manage hot takes\n`;ltypeon`/`;ltypeoff` - Toggle typing indicator", inline=False)
         embed.set_footer(text="Lucky AI - Powered by AI")
         embed.timestamp = discord.utils.utcnow()
         await ctx.send(embed=embed)
+
+    @commands.command(name="lask")
+    async def lask(self, ctx: commands.Context, *, question: str = None):
+        if not ctx.guild:
+            await ctx.send(":x: This command only works in servers.")
+            return
+        if not question and not ctx.message.attachments:
+            await ctx.send("Usage: `;lask <question>` or attach an image")
+            return
+        author_id = str(ctx.author.id)
+        guild_id = str(ctx.guild.id)
+        is_admin = await self._require_admin(ctx)
+        cd_ms = 10000 if is_admin else 60000
+        cooldown = self.cooldowns.check(author_id, cd_ms, "ask")
+        if cooldown["active"]:
+            await ctx.send(f":hourglass_flowing_sand: Wait {cooldown['remaining_sec']}s")
+            return
+        try:
+            await self._handle_typing(ctx.channel)
+            bot_user_id = str(self.bot.user.id)
+            ctx_msgs = await self.db.get_channel_messages(str(ctx.channel.id), 25)
+            context_lines = []
+            for m in (ctx_msgs or []):
+                if m.get("author_id") == bot_user_id:
+                    continue
+                name = m.get("author_tag") or m.get("author_id", "Someone")
+                content = (m.get("content", "") or "")[:250]
+                context_lines.append(f"{name}: {content}")
+            ctx_text = "\n".join(context_lines[-25:])
+            user_name = ctx.author.display_name or ctx.author.name
+            if ctx_text:
+                prompt = f"Recent chat:\n{ctx_text}\n---\n{user_name}: {question or '[image]'}\n\nAnswer:"
+            else:
+                prompt = f"{user_name}: {question or '[image]'}\n\nAnswer:"
+            attach = ctx.message.attachments[0] if ctx.message.attachments else None
+            has_image = attach and attach.content_type and attach.content_type.startswith("image/")
+            if has_image:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(attach.url) as resp:
+                        if resp.status == 200:
+                            buf = await resp.read()
+                            import base64
+                            b64 = base64.b64encode(buf).decode()
+                            mime = attach.content_type or "image/jpeg"
+                            content_parts = [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                            ]
+                            msgs = [{"role": "user", "content": content_parts}]
+                        else:
+                            msgs = [{"role": "user", "content": prompt}]
+            else:
+                msgs = [{"role": "user", "content": prompt}]
+            async with self.config.all() as gcfg:
+                model = gcfg.get("ask_vision_model") if has_image else gcfg.get("ask_model")
+            payload = {"messages": [{"role": "system", "content": ASK_SYSTEM_PROMPT}, *msgs], "temperature": 0.85, "max_tokens": 600}
+            resp = await self.ai_service.execute_request(payload, model, context="ASK", timeout=45, max_retries=2)
+            text = resp["choices"][0]["message"]["content"]
+            chunks = [text[i:i+1990] for i in range(0, len(text), 1990)] if len(text) > 1990 else [text]
+            for chunk in chunks:
+                await ctx.send(chunk)
+            await self._log_command(guild_id, author_id, "ask")
+        except Exception as e:
+            log.error("ASK Error: %s", e)
+            await ctx.send(f":x: {e}")
+            await self._log_command(guild_id, author_id, "ask", False)
+
+    @commands.command(name="ldebate")
+    async def ldebate(self, ctx: commands.Context):
+        if not ctx.guild:
+            await ctx.send(":x: This command only works in servers.")
+            return
+        author_id = str(ctx.author.id)
+        guild_id = str(ctx.guild.id)
+        is_admin = await self._require_admin(ctx)
+        cd_ms = 20000 if is_admin else 120000
+        cooldown = self.cooldowns.check(author_id, cd_ms, "debate")
+        if cooldown["active"]:
+            await ctx.send(f":hourglass_flowing_sand: Wait {cooldown['remaining_sec']}s")
+            return
+        try:
+            msgs = await self.db.get_channel_messages(str(ctx.channel.id), 50)
+            if not msgs or len(msgs) < 2:
+                await ctx.send("Nothing to debate here. Start an argument first.")
+                return
+            opt_out_ids = await self.db.get_opt_out_user_ids(str(ctx.guild.id))
+            opt_set = set(opt_out_ids)
+            filtered = [m for m in msgs if m.get("author_id") not in opt_set]
+            if len(filtered) < 2:
+                await ctx.send(":x: Not enough participants after filtering opt-outs.")
+                return
+            participants = set()
+            ctx_text = ""
+            for m in filtered[-50:]:
+                name = m.get("author_tag") or m.get("author_id", "Someone")
+                content = (m.get("content", "") or "")[:300]
+                ctx_text += f"{name}: {content}\n"
+                participants.add(name)
+            if len(participants) < 2:
+                await ctx.send("You can't debate yourself. Grab a friend.")
+                return
+            if len(participants) > 10:
+                await ctx.send("Too many cooks. Narrow it down to 2 sides.")
+                return
+            await self._handle_typing(ctx.channel)
+            prompt = f"Recent chat:\n{ctx_text}\n\nJudge this debate:"
+            async with self.config.all() as gcfg:
+                model = gcfg.get("ask_model", "deepseek/deepseek-reasoner")
+            payload = {"messages": [{"role": "system", "content": DEBATE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}], "temperature": 0.85, "max_tokens": 800}
+            resp = await self.ai_service.execute_request(payload, model, context="DEBATE", timeout=45, max_retries=2)
+            text = resp["choices"][0]["message"]["content"]
+            parsed = parse_debate_response(text)
+            if not parsed.get("winner") or (not parsed.get("sideA") and not parsed.get("sideB")):
+                await ctx.send("This isn't really a debate, just vibes. Pick a side and argue.")
+                return
+            is_a_win = parsed.get("winner", "").upper().startswith("A")
+            embed = discord.Embed(
+                title=f"\u2696\uFE0F Debate: {parsed.get('topic', 'Conversation Analysis')}",
+                color=0x00ff00 if is_a_win else 0xff0000,
+            )
+            if parsed.get("sideA"):
+                parts = parsed["sideA"].split("\u2014\u2014", 1)
+                embed.add_field(name=f"\U0001f3db\uFE0F Side A: {parts[0].strip() if parts else ''}", value=parts[1].strip() if len(parts) > 1 else parsed["sideA"], inline=True)
+            if parsed.get("sideB"):
+                parts = parsed["sideB"].split("\u2014\u2014", 1)
+                embed.add_field(name=f"\U0001f3db\uFE0F Side B: {parts[0].strip() if parts else ''}", value=parts[1].strip() if len(parts) > 1 else parsed["sideB"], inline=True)
+            embed.add_field(name="\U0001f3c6 Verdict", value=parsed.get("verdict", "Inconclusive"), inline=False)
+            embed.add_field(name="\U0001f480 Loser Take", value=parsed.get("loserTake", "No arguments found."), inline=False)
+            if parsed.get("score"):
+                embed.add_field(name="\U0001f4ca Score", value=parsed["score"], inline=False)
+            embed.set_footer(text=f"Requested by {ctx.author.name}")
+            await ctx.send(embed=embed)
+            await self._log_command(guild_id, author_id, "debate")
+        except Exception as e:
+            log.error("DEBATE Error: %s", e)
+            await ctx.send("Something broke. Try again.")
+            await self._log_command(guild_id, author_id, "debate", False)
+
+    @commands.command(name="lhtt")
+    @checks.admin_or_permissions(administrator=True)
+    async def lhtt(self, ctx: commands.Context, action: str):
+        if not ctx.guild:
+            return
+        guild_id = str(ctx.guild.id)
+        if action == "on":
+            self.hot_take_enabled = True
+            await self.db.save_hot_take_enabled(True)
+            await ctx.send(":white_check_mark: Hot Takes enabled!")
+        elif action == "off":
+            self.hot_take_enabled = False
+            await self.db.save_hot_take_enabled(False)
+            await ctx.send("Hot Takes disabled!")
+        elif action == "fire":
+            channel_id = str(ctx.channel.id)
+            allowed = await self._get_hot_take_channels(guild_id)
+            if channel_id not in allowed:
+                await ctx.send(":x: This channel is not configured for hot takes.")
+                return
+            await ctx.send(":fire: Firing hot take...")
+            try:
+                ctx_msgs = await self.db.get_channel_messages(channel_id, self.hot_take_config["context_messages"])
+                if not ctx_msgs:
+                    await ctx.send(":x: No messages available for context.")
+                    return
+                conversation = self._format_hot_take_context(ctx_msgs)
+                async with self.config.guild(ctx.guild).all() as cfg:
+                    model = cfg.get("model", "nvidia/qwen/qwen3.5-122b-a10b")
+                payload = {
+                    "messages": [{"role": "user", "content": HOT_TAKE_PROMPT.format(conversation=conversation)}],
+                    "temperature": 0.9,
+                    "max_tokens": 500,
+                }
+                resp = await self.ai_service.execute_request(payload, model, context="HOT_TAKE")
+                text = sanitize_output(resp["choices"][0]["message"]["content"])
+                await ctx.send(text)
+                self.hot_take_cooldowns[channel_id] = time.time() * 1000
+                await self.db.log_hot_take(guild_id, channel_id, text, len(ctx_msgs), model, 0)
+            except Exception as e:
+                log.error("HOT_TAKE Error: %s", e)
+                await ctx.send(f":x: Failed to generate hot take.")
+        else:
+            await ctx.send("Usage: `;lhtt on` / `;lhtt off` / `;lhtt fire`")
+
+    @commands.command(name="ltypeon")
+    @checks.admin_or_permissions(administrator=True)
+    async def ltypeon(self, ctx: commands.Context):
+        if not ctx.guild:
+            return
+        async with self.config.guild(ctx.guild).all() as cfg:
+            cfg["typing_enabled"] = True
+        await ctx.send(":white_check_mark: Typing indicator ON")
+
+    @commands.command(name="ltypeoff")
+    @checks.admin_or_permissions(administrator=True)
+    async def ltypeoff(self, ctx: commands.Context):
+        if not ctx.guild:
+            return
+        async with self.config.guild(ctx.guild).all() as cfg:
+            cfg["typing_enabled"] = False
+        await ctx.send("Typing indicator OFF")

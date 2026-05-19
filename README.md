@@ -6,18 +6,21 @@ AI-powered roasting, TLDR summaries, chat Q&A, debate judging, and hot takes - a
 
 ## Features
 
+All commands use the `;l` prefix. No slash commands.
+
 | Command | Description |
 |---------|-------------|
-| `/roast @user` | Generate a personal AI roast from their message history |
-| `/tldr [count] [style]` | Summarize the last N chat messages (normal or greentext) |
-| `;ask <question>` | Chat with the AI using recent channel context |
-| `;debate` | Judge the last argument in chat - picks a winner |
-| `;htt fire` | Fire an automated "hot take" based on channel vibe |
-| `/settings` | Interactive UI for model, temperature, styles, and fetch mode |
-| `/setup` | Step-by-step wizard to configure API keys and test endpoints |
-| `/optout` | Opt in/out of being roasted |
-| `/stats` | View bot usage stats and health |
-| `/config` | Manage sync channels, blacklist, admin role |
+| `;lroast @user` | Generate a personal AI roast from their message history |
+| `;ltldr [count] [style]` | Summarize the last N chat messages (normal or greentext) |
+| `;lask <question>` | Chat with the AI using recent channel context |
+| `;ldebate` | Judge the last argument in chat - picks a winner |
+| `;lhtt fire` | Fire an automated "hot take" based on channel vibe |
+| `;lsettings` | Interactive UI for model, temperature, styles, fetch mode, and API keys |
+| `;lsetup` | Step-by-step wizard to configure API keys and test endpoints |
+| `;loptout` | Opt in/out of being roasted |
+| `;lstats` | View bot usage stats and health |
+| `;lhelp` | Show all commands |
+| `;lconfig` | Manage sync channels, blacklist, admin role |
 
 ---
 
@@ -46,14 +49,14 @@ At least one provider must be configured. The bot will automatically fall back t
 Then run the interactive setup:
 
 ```
-[p]setup
+[lsetup
 ```
 
-Or save API keys directly:
+Or save API keys directly via Red's API system:
 
 ```
-[p]set api openai api_key YOUR_KEY
-[p]set api groq api_key YOUR_KEY
+[lset api openai api_key YOUR_KEY
+[lset api groq api_key YOUR_KEY
 ```
 
 ---
@@ -61,32 +64,19 @@ Or save API keys directly:
 ## Quick Start
 
 1. **Install & load** the cog
-2. Run **`/setup`** - the wizard walks you through API keys, endpoint testing, and model selection
-3. Add a sync channel: **`/config channels add #general`**
-4. Start roasting: **`/roast @user`**
-5. Tune settings: **`/settings`**
-
----
-
-## Prefix Commands
-
-All prefix commands use the `;l` namespace to avoid conflicts with other bots.
-
-| Prefix | Description |
-|--------|-------------|
-| `;lask <question>` | Ask the AI anything with channel context |
-| `;ldebate` | Judge the most recent debate in chat |
-| `;ltldr 50` | TLDR the last 50 messages |
-| `;lgreentext 50` | 4chan-style greentext summary |
-| `;lhtt on / off / fire` | Manage hot takes |
-| `;ltypeon / ;ltypeoff` | Toggle typing indicator |
+2. Run **`;lsetup`** - the wizard walks you through API keys, endpoint testing, and model selection
+3. Add a sync channel: **`;lconfig channels add #general`**
+4. Start roasting: **`;lroast @user`**
+5. See all commands: **`;lhelp`**
+6. Tune settings: **`;lsettings`**
 
 ---
 
 ## Configuration
 
-All per-guild settings are available through **`/settings`**:
+All per-guild settings are available through **`;lsettings`**:
 
+- **API Keys** - set, change, or remove keys for any provider
 - **Model** - pick from any provider's models
 - **Temperature / Top P / Top K** - tune generation creativity
 - **Frequency / Presence Penalty** - control repetition
@@ -101,9 +91,9 @@ All per-guild settings are available through **`/settings`**:
 The cog stores messages in a local SQLite database (`messages.db`). To start syncing:
 
 ```
-/config channels add #channel
-/config channels remove #channel
-/config channels list
+;lconfig channels add #channel
+;lconfig channels remove #channel
+;lconfig channels list
 ```
 
 Synced messages are used for roasting, TLDR, debate, and ask commands.
@@ -112,9 +102,9 @@ Synced messages are used for roasting, TLDR, debate, and ask commands.
 
 ## Data Privacy
 
-- Users can opt out of being roasted with `/optout out`
+- Users can opt out of being roasted with `;loptout out`
 - Opted-out users' messages are excluded from roast/analysis
-- Users can be blacklisted by admins (`/config blacklist add @user`)
+- Users can be blacklisted by admins (`;lconfig blacklist add @user`)
 - Message data is stored only for explicitly configured sync channels
 
 ---
