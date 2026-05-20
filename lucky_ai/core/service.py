@@ -97,7 +97,7 @@ class AIService:
                 self._session = aiohttp.ClientSession()
             return self._session
 
-    def _get_api_key(self, provider: str) -> str:
+    async def _get_api_key(self, provider: str) -> str:
         """
         Get API key for a provider from Red's shared API tokens.
         
@@ -105,12 +105,10 @@ class AIService:
         Uses Red's bot.get_shared_api_tokens() instead of env vars or config files.
         This is the correct Red pattern for storing sensitive credentials.
         
-        Note: This is a synchronous wrapper. For async contexts, use await bot.get_shared_api_tokens().
+        Note: This is now async to properly await bot.get_shared_api_tokens().
         """
         try:
-            # Note: In newer Red versions, this is async. This method is kept for compatibility.
-            # Callers should use await bot.get_shared_api_tokens() directly in async contexts.
-            tokens = self.bot.get_shared_api_tokens(provider)
+            tokens = await self.bot.get_shared_api_tokens(provider)
             if tokens:
                 return tokens.get("api_key", "")
         except Exception as e:
@@ -130,7 +128,7 @@ class AIService:
         Raises:
             ValueError: If no API key is configured
         """
-        api_key = self._get_api_key(provider)
+        api_key = await self._get_api_key(provider)
         if not api_key:
             raise ValueError(f"No API key configured for {provider}")
         headers = {
@@ -160,7 +158,7 @@ class AIService:
         Returns:
             Dict with test results (status, latency, message)
         """
-        api_key = self._get_api_key(provider)
+        api_key = await self._get_api_key(provider)
         base_url = PROVIDER_BASE_URLS.get(provider)
         fallback_model = FALLBACK_DEFAULT_MODELS.get(provider)
         actual_model = get_actual_model_id(fallback_model, self._models_data)
@@ -312,7 +310,7 @@ class AIService:
         """
         idx = PROVIDER_ORDER.index(failed_provider) if failed_provider in PROVIDER_ORDER else -1
         for provider in PROVIDER_ORDER[idx + 1:]:
-            api_key = self._get_api_key(provider)
+            api_key = await self._get_api_key(provider)
             if not api_key:
                 continue
             fallback_model = FALLBACK_DEFAULT_MODELS.get(provider)
