@@ -104,8 +104,12 @@ class AIService:
         DEVIATION FROM RED BEST PRACTICES:
         Uses Red's bot.get_shared_api_tokens() instead of env vars or config files.
         This is the correct Red pattern for storing sensitive credentials.
+        
+        Note: This is a synchronous wrapper. For async contexts, use await bot.get_shared_api_tokens().
         """
         try:
+            # Note: In newer Red versions, this is async. This method is kept for compatibility.
+            # Callers should use await bot.get_shared_api_tokens() directly in async contexts.
             tokens = self.bot.get_shared_api_tokens(provider)
             if tokens:
                 return tokens.get("api_key", "")

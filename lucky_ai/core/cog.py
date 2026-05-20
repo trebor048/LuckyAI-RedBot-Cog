@@ -950,7 +950,7 @@ class LuckyAICog(commands.Cog):
 
     @commands.command(name="lsetup")
     @checks.admin_or_permissions(administrator=True)
-    async def lsetup(self, ctx: commands.Context):
+    async def lsetup(self, ctx: commands.Context) -> None:
         """Run the interactive setup wizard to configure API keys and default model."""
         if not ctx.guild:
             await ctx.send(":x: This command only works in servers.")
@@ -958,7 +958,8 @@ class LuckyAICog(commands.Cog):
 
         already_configured = []
         for provider in PROVIDER_ORDER:
-            from_red = self.bot.get_shared_api_tokens(provider).get("api_key", "")
+            tokens = await self.bot.get_shared_api_tokens(provider)
+            from_red = tokens.get("api_key", "") if tokens else ""
             if from_red:
                 already_configured.append(provider)
 
@@ -976,7 +977,8 @@ class LuckyAICog(commands.Cog):
         session_id = str(self._session_counter)
         api_keys = {}
         for provider in PROVIDER_ORDER:
-            existing = self.bot.get_shared_api_tokens(provider).get("api_key", "")
+            tokens = await self.bot.get_shared_api_tokens(provider)
+            existing = tokens.get("api_key", "") if tokens else ""
             if existing:
                 api_keys[provider] = existing
 
@@ -990,6 +992,7 @@ class LuckyAICog(commands.Cog):
             "finished": False,
             "test_results": [],
             "prefix": ctx.clean_prefix,
+            "_last_accessed": time.time() * 1000,
         }
 
         view = SetupView(self, session_id, ctx.author.id, ctx.guild.id)

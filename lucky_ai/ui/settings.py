@@ -356,7 +356,7 @@ class SettingsView(View):
             elif page_key == "fetch":
                 self._build_fetch_embed(embed, cfg)
             elif page_key == "apikeys":
-                self._build_apikeys_embed(embed)
+                await self._build_apikeys_embed(embed)
             elif page_key == "endpoints":
                 self._build_endpoints_embed(embed)
             elif page_key == "advanced":
@@ -399,12 +399,12 @@ class SettingsView(View):
             inline=False,
         )
 
-    def _build_apikeys_embed(self, embed):
+    async def _build_apikeys_embed(self, embed):
         embed.color = 0xf59e0b
         embed.description = "Click a provider below to **set, change, or remove** its API key.\nKeys are stored securely via Red's API token system."
         lines = []
         for p in PROVIDER_ORDER:
-            tokens = self.cog.bot.get_shared_api_tokens(p)
+            tokens = await self.cog.bot.get_shared_api_tokens(p)
             full_key = tokens.get("api_key", "") if tokens else ""
             has_key = bool(full_key)
             masked = _mask_key(full_key) if has_key else ""

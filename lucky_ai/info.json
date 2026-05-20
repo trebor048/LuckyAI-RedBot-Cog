@@ -2,7 +2,7 @@
     "author": ["Lucky AI Team"],
     "name": "lucky-ai",
     "description": "AI-powered Discord cog for roasts, TLDR summaries, chat Q&A, debate judging, and hot takes. Supports 7 AI providers with automatic fallback.",
-    "install_msg": "✅ Cog installed successfully!\n\n🚀 Load the cog\n`[p]load lucky-ai`\n\n⚙️ Run the setup wizard\n`[p]lsetup`\n\nThe wizard will:\n1️⃣ Guide you through adding AI provider API keys\n2️⃣ Let you test your API keys\n3️⃣ Set your default AI model\n4️⃣ Optionally sync a channel for message history\n\n💡 You only need ONE API key to get started. The cog will automatically switch to another provider if one fails.\n\n📖 After setup, type `[p]lhelp` to see all commands!",
+    "install_msg": "cog installed ✅. run `[p]load lucky_ai` to activate the cog. and `[p]lsetup` to run the setup interactive wizard.",
     "short": "AI roasts, TLDRs, Q&A, and debates",
     "tags": ["ai", "roast", "tldr", "fun", "chat", "utility", "debate"],
     "requirements": ["aiohttp>=3.9.0", "aiosqlite>=0.19.0"],
