@@ -1,15 +1,15 @@
 {
     "author": ["Lucky AI Team"],
     "name": "lucky-ai",
-    "short": "AI-powered roasts, TLDRs, message analysis, and debate judge for Discord",
-    "description": "Full-featured Discord AI cog that syncs messages to SQLite and delivers AI-powered roasts, TLDR summaries, greentext recaps, chat Q&A, debate judging, hot takes, and message analysis. Supports 7 AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Zhipu AI, OpenRouter) with automatic fallback. Interactive settings UI, per-guild configuration, cooldowns, opt-out, and blacklist support.",
-    "install_msg": "Thanks for installing Lucky AI! Run `[p]lsetup` to launch the interactive setup wizard that walks you through API keys and testing. Type `[p]lhelp` to see all commands. All commands use the `l` prefix.",
+    "short": "AI-powered roasts, TLDRs, Q&A, and debates",
+    "description": "Full-featured Discord AI cog with roasts, TLDR summaries, greentext recaps, chat Q&A, debate judging, and hot takes. Supports 7 AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Zhipu AI, OpenRouter) with automatic fallback. Interactive settings UI, per-guild configuration, cooldowns, opt-out, and blacklist support.",
+    "install_msg": "✅ Repository added successfully!\n\n📦 Next step: Install the cog\n`[p]cog install LuckyAI lucky-ai`\n\n🚀 Then load it\n`[p]load lucky-ai`\n\n⚙️ Finally, run the setup wizard\n`[p]lsetup`\n\nThe setup wizard will guide you through configuring AI provider API keys. You only need one provider to get started!",
     "requirements": [
         "aiohttp>=3.9.0",
         "aiosqlite>=0.19.0"
     ],
     "min_bot_version": "3.5.0",
-    "end_user_data_statement": "This cog stores user messages for roasting, Q&A, and analysis purposes. Users can opt out via the /optout command. Stored data includes message content, author ID, and timestamps for channels explicitly configured by server admins.",
+    "end_user_data_statement": "This cog stores Discord message IDs, user IDs, and message content in a local SQLite database for AI processing (roasts, TLDRs, Q&A). Message content is only stored from channels explicitly configured by server admins. Users can opt out via `[p]loptout out`.",
     "permissions": [
         "read_messages",
         "send_messages",
@@ -22,9 +22,9 @@
         "roast",
         "ai",
         "fun",
-        "moderation",
         "utility",
         "tldr",
-        "debate"
+        "debate",
+        "chat"
     ]
 }

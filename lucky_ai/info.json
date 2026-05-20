@@ -1,12 +1,12 @@
 {
     "author": ["Lucky AI Team"],
     "name": "lucky-ai",
-    "description": "AI-powered Discord cog for roasts, TLDR summaries, chat Q&A, debate judging, and hot takes. Supports multiple AI providers (OpenAI, Groq, NVIDIA, DeepSeek, Moonshot, OpenRouter, Zhipu AI).",
-    "install_msg": "Thank you for installing Lucky AI! Run `[p]lsetup` to configure API keys, then `[p]lhelp` to see all commands.",
-    "short": "AI roasts, TLDRs, Q&A, and debates.",
-    "tags": ["ai", "roast", "tldr", "openai", "fun", "chat"],
+    "description": "AI-powered Discord cog for roasts, TLDR summaries, chat Q&A, debate judging, and hot takes. Supports 7 AI providers with automatic fallback.",
+    "install_msg": "✅ Cog installed successfully!\n\n🚀 Load the cog\n`[p]load lucky-ai`\n\n⚙️ Run the setup wizard\n`[p]lsetup`\n\nThe wizard will:\n1️⃣ Guide you through adding AI provider API keys\n2️⃣ Let you test your API keys\n3️⃣ Set your default AI model\n4️⃣ Optionally sync a channel for message history\n\n💡 You only need ONE API key to get started. The cog will automatically switch to another provider if one fails.\n\n📖 After setup, type `[p]lhelp` to see all commands!",
+    "short": "AI roasts, TLDRs, Q&A, and debates",
+    "tags": ["ai", "roast", "tldr", "fun", "chat", "utility", "debate"],
     "requirements": ["aiohttp>=3.9.0", "aiosqlite>=0.19.0"],
     "min_bot_version": "3.5.0",
     "permissions": ["read_messages", "send_messages", "manage_messages", "read_message_history", "embed_links", "attach_files"],
-    "end_user_data_statement": "This cog stores Discord message IDs, user IDs, and message content in a local SQLite database for AI processing features (roasts, TLDRs, Q&A). Message content is only stored from channels explicitly configured by server admins. Users can opt out of being roasted via `[p]loptout out`."
+    "end_user_data_statement": "This cog stores Discord message IDs, user IDs, and message content in a local SQLite database for AI processing (roasts, TLDRs, Q&A). Message content is only stored from channels explicitly configured by server admins. Users can opt out via `[p]loptout out`."
 }
