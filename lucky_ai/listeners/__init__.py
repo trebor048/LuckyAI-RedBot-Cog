@@ -1,7 +1,2 @@
-"""
-Listeners module for Lucky AI cog.
-"""
-
-from .message_listener import MessageListener
-
+from .messages import MessageListener
 __all__ = ["MessageListener"]

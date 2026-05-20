@@ -1,0 +1,12 @@
+{
+    "author": ["Lucky AI Team"],
+    "name": "lucky-ai",
+    "description": "AI-powered Discord cog for roasts, TLDR summaries, chat Q&A, debate judging, and hot takes. Supports multiple AI providers (OpenAI, Groq, NVIDIA, DeepSeek, Moonshot, OpenRouter, Zhipu AI).",
+    "install_msg": "Thank you for installing Lucky AI! Run `[p]lsetup` to configure API keys, then `[p]lhelp` to see all commands.",
+    "short": "AI roasts, TLDRs, Q&A, and debates.",
+    "tags": ["ai", "roast", "tldr", "openai", "fun", "chat"],
+    "requirements": ["aiohttp>=3.9.0", "aiosqlite>=0.19.0"],
+    "min_bot_version": "3.5.0",
+    "permissions": ["read_messages", "send_messages", "manage_messages", "read_message_history", "embed_links", "attach_files"],
+    "end_user_data_statement": "This cog stores Discord message IDs, user IDs, and message content in a local SQLite database for AI processing features (roasts, TLDRs, Q&A). Message content is only stored from channels explicitly configured by server admins. Users can opt out of being roasted via `[p]loptout out`."
+}

@@ -22,6 +22,14 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.hive/
 
 # Logs
 *.log
+
+# Git
+.git/
+
+# Agents & Notes
+AGENTS.md
+AI-DOCS/

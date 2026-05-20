@@ -1,7 +1,6 @@
 import time
 import hashlib
-
-from .ai_service import PROVIDER_ORDER, FALLBACK_DEFAULT_MODELS
+import re
 
 
 DEFAULT_PERSONALITIES = {
@@ -21,8 +20,8 @@ BASE_ROAST_PROMPT = (
     "- Expose their flaws, their pathetic choices, their wasted potential.\n"
     "- Make them feel genuinely hated. No mercy. No softening.\n"
     "- Short, punchy sentences. One kill shot per sentence.\n"
-    "- Use their own words against them \u2014 quote or reference what they actually said.\n"
-    "- NO clich\u00e9s (dumpster fire, trainwreck, yikes, main character, etc).\n"
+    "- Use their own words against them — quote or reference what they actually said.\n"
+    "- NO clichés (dumpster fire, trainwreck, yikes, main character, etc).\n"
     '- NO meta commentary ("I would roast you but..."). Just roast.\n'
     "- End with the meanest line. The one that stings longest.\n"
     "\n"
@@ -85,7 +84,6 @@ def sanitize_output(text):
         return ""
     text = text.replace("@everyone", "@\u200beveryone")
     text = text.replace("@here", "@\u200bhere")
-    import re
     text = re.sub(r"<@!?&?\d{17,19}>", lambda m: m.group(0).replace("@", "@\u200b"), text)
     return text
 
@@ -94,40 +92,18 @@ def generate_content_hash(content):
     return hashlib.sha256((content or "").encode()).hexdigest()[:16]
 
 
-def format_messages_for_ai(messages, author_tag_key="author_tag"):
-    if not messages:
-        return "No messages available."
-    lines = []
-    for msg in messages:
-        author = msg.get(author_tag_key) or msg.get("author_id") or "Unknown"
-        content = msg.get("content") or ""
-        lines.append(f"{author}: {content}")
-    return "\n".join(lines)
-
-
-PROVIDER_LABELS = {
-    "nvidia": "NVIDIA",
-    "groq": "Groq",
-    "moonshot": "Moonshot",
-    "zai": "Z-AI",
-    "deepseek": "DeepSeek",
-    "openrouter": "OpenRouter",
-    "openai": "OpenAI",
-}
-
-
 TLDR_SYSTEM_PROMPT = (
     "You are a sharp, observational summarizer. Given Discord chat messages, produce a TL;DR summary "
     "of the conversation's vibe and actions.\n\n"
     "Rules:\n"
-    "- Summarize the overall vibe, key events, and general flow \u2014 do NOT quote or repeat messages verbatim\n"
+    "- Summarize the overall vibe, key events, and general flow — do NOT quote or repeat messages verbatim\n"
     "- Describe what people talked about and did, not their exact words\n"
-    "- Paraphrase freely \u2014 capture the essence, not a transcript\n"
+    "- Paraphrase freely — capture the essence, not a transcript\n"
     "- Keep it to ONE tight paragraph, 3-6 sentences\n"
     '- Start with "TL;DR:"\n'
     "- If the chat is chaotic, shitposty, or toxic, use that language honestly\n"
     "- Mention users by name when they drove a topic or moment\n"
-    "- Do NOT describe how the conversation \"ended\" or what state things were \"left in\" \u2014 just cover what happened\n"
+    '- Do NOT describe how the conversation "ended" or what state things were "left in" — just cover what happened\n'
     "- No markdown, no bullet points, no formatting"
 )
 
@@ -136,16 +112,16 @@ GREENTEXT_SYSTEM_PROMPT = (
     "Rules:\n"
     '- Every line MUST start with ">"\n'
     '- Use 4chan slang, greentext conventions ("be me", "mfw", etc.)\n'
-    "- Be brutally honest, crass, and funny \u2014 channel 4chan humor\n"
-    "- Format like a classic greentext story: setup \u2192 events \u2192 punchline\n"
+    "- Be brutally honest, crass, and funny — channel 4chan humor\n"
+    "- Format like a classic greentext story: setup → events → punchline\n"
     '- Can include fake namefagging (e.g. ">be Eaglee, tripping balls")\n'
     "- Keep between 8 and 25 lines total\n"
     '- End with a classic closer like ">mfw ..." or similar\n'
-    "- Reference actual events from the messages \u2014 don't just make everything up"
+    "- Reference actual events from the messages — don't just make everything up"
 )
 
 ASK_SYSTEM_PROMPT = (
-    "You are a chaotic, witty Discord chat bot. The user asked a question \u2014 answer it directly without "
+    "You are a chaotic, witty Discord chat bot. The user asked a question — answer it directly without "
     "hesitation or preambles. Be sarcastic, casual, and match the energy of a group chat. Don't be a "
     "pushover or give boring corporate answers. If the question is edgy, engage with it. If it's dumb, "
     "roast it gently. Reference the chat context if relevant."
@@ -165,15 +141,15 @@ DEBATE_SYSTEM_PROMPT = (
     "- Clarity (1-2): Clear argument vs. rambling\n\n"
     "FORMAT:\n"
     "Topic: [one line]\n"
-    "Side A: @[username] \u2014\u2014 [argument summary]\n"
-    "Side B: @[username] \u2014\u2014 [argument summary]\n"
+    "Side A: @[username] —— [argument summary]\n"
+    "Side B: @[username] —— [argument summary]\n"
     "Winner: A or B\n"
     "Verdict: [2-3 sentences on why winner is right]\n"
     "Loser Take: [1-2 sentences roast of bad argument]\n"
     "Score: A: [logic+evidence+clarity]/10 | B: [total]/10\n\n"
     "RULES:\n"
     '- Be direct. Someone is WRONG. Say it.\n'
-    '- No "both sides have valid points" \u2014 pick a winner\n'
+    '- No "both sides have valid points" — pick a winner\n'
     "- Witty, roast-style insults for the loser\n"
     "- If consensus reached, judge the quality of getting there"
 )
@@ -195,23 +171,6 @@ Conversation:
 {conversation}
 
 Write the hot take:"""
-
-DEFAULT_SETTINGS = {
-    "model": "nvidia/qwen/qwen3.5-122b-a10b",
-    "temperature": 1.0,
-    "max_tokens": 4096,
-    "top_p": 0.9,
-    "top_k": 40,
-    "frequency_penalty": 0.4,
-    "presence_penalty": 0.2,
-    "promptKey": "blunt",
-    "messageFetchMode": "random",
-    "randomMode": False,
-    "enabled": True,
-    "admin_role": None,
-    "typing_enabled": True,
-    "sync_channels": [],
-}
 
 
 def format_messages_for_roast(messages):
@@ -244,9 +203,8 @@ def format_messages_for_tldr(messages, style="normal"):
 
 
 def parse_debate_response(text):
-    import re
     def extract(label):
-        regex = re.compile(rf"{label}:\s*(.+)", re.IGNORECASE | re.DOTALL)
+        regex = re.compile(re.escape(label) + r":\s*([^\n]+)", re.IGNORECASE)
         match = regex.search(text)
         return match.group(1).strip() if match else None
     
@@ -269,7 +227,7 @@ def make_cooldown_message(remaining_sec, reset_at=None):
             utc = reset_at.strftime("%H:%M") if hasattr(reset_at, "strftime") else str(reset_at)
             return f"Cooldown active - resets at {utc} UTC"
         return f"Cooldown active - wait {remaining_sec}s"
-    hours = max(1, remaining_sec // 3600)
+    hours = max(1, int(remaining_sec // 3600))
     return f"Cooldown active - resets in ~{hours} hours"
 
 

@@ -1,12 +1,10 @@
-import os
-import json
 import time
 import asyncio
 import aiosqlite
 import logging
 from typing import List, Optional
 
-from .utils import generate_content_hash
+from ..utils import generate_content_hash
 
 log = logging.getLogger("red.LuckyAICog.db")
 
@@ -21,11 +19,10 @@ class MessageDB:
         async with self._lock:
             self._conn = await aiosqlite.connect(self.db_path)
             self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA journal_mode = WAL")
+            await self._conn.execute("PRAGMA synchronous = NORMAL")
+            await self._conn.execute("PRAGMA cache_size = -32000")
             await self._conn.executescript("""
-                PRAGMA journal_mode = WAL;
-                PRAGMA synchronous = NORMAL;
-                PRAGMA cache_size = -32000;
-
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
                     author_id TEXT NOT NULL,
@@ -102,6 +99,7 @@ class MessageDB:
                 CREATE INDEX IF NOT EXISTS idx_message_channel ON messages(channel_id, timestamp DESC);
                 CREATE INDEX IF NOT EXISTS idx_user_opt_outs_guild ON user_opt_outs(guild_id, opted_out);
                 CREATE INDEX IF NOT EXISTS idx_guild_blacklist_guild ON guild_blacklist(guild_id);
+
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY,
                     roast_count INTEGER DEFAULT 0,
@@ -124,15 +122,21 @@ class MessageDB:
                 self._conn = None
 
     async def _ensure_open(self):
-        if self._conn is None:
-            await self.initialize()
+        async with self._lock:
+            if self._conn is None:
+                await self.initialize()
 
     async def save_message(self, msg):
         await self._ensure_open()
-        if not msg or not msg.get("id") or not msg.get("author") or not msg.get("channel"):
+        if not msg or not msg.get("id"):
             return
-        author = msg.get("author", {})
-        channel = msg.get("channel", {})
+        author = msg.get("author") or {}
+        channel = msg.get("channel") or {}
+        if not author.get("id") or not channel.get("id"):
+            return
+        guild_id = msg.get("guild_id")
+        if not guild_id and isinstance(msg.get("guild"), dict):
+            guild_id = msg["guild"].get("id")
         async with self._lock:
             await self._conn.execute(
                 """INSERT OR REPLACE INTO messages
@@ -144,9 +148,9 @@ class MessageDB:
                     author.get("tag") or author.get("name") or str(author.get("id", "")),
                     msg.get("content") or "",
                     generate_content_hash(msg.get("content")),
-                    msg.get("timestamp") or int(time.time() * 1000),
+                    msg.get("timestamp") if msg.get("timestamp") is not None else int(time.time() * 1000),
                     channel.get("id"),
-                    msg.get("guild_id") or (msg.get("guild", {}) or {}).get("id") if isinstance(msg.get("guild"), dict) else None,
+                    guild_id,
                 ),
             )
             await self._conn.commit()
@@ -156,33 +160,28 @@ class MessageDB:
         if not messages:
             return
         async with self._lock:
-            await self._conn.execute("BEGIN")
-            try:
-                for msg in messages:
-                    author = msg.get("author", {})
-                    channel = msg.get("channel", {})
-                    guild_id = msg.get("guild_id")
-                    if not guild_id and isinstance(msg.get("guild"), dict):
-                        guild_id = msg["guild"].get("id")
-                    await self._conn.execute(
-                        """INSERT OR REPLACE INTO messages
-                           (id, author_id, author_tag, content, content_hash, timestamp, channel_id, guild_id)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            msg["id"],
-                            author.get("id"),
-                            author.get("tag") or author.get("name") or str(author.get("id", "")),
-                            msg.get("content") or "",
-                            generate_content_hash(msg.get("content")),
-                            msg.get("timestamp") or int(time.time() * 1000),
-                            channel.get("id"),
-                            guild_id,
-                        ),
-                    )
-                await self._conn.commit()
-            except Exception:
-                await self._conn.rollback()
-                raise
+            for msg in messages:
+                author = msg.get("author", {})
+                channel = msg.get("channel", {})
+                guild_id = msg.get("guild_id")
+                if not guild_id and isinstance(msg.get("guild"), dict):
+                    guild_id = msg["guild"].get("id")
+                await self._conn.execute(
+                    """INSERT OR REPLACE INTO messages
+                       (id, author_id, author_tag, content, content_hash, timestamp, channel_id, guild_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        msg["id"],
+                        author.get("id"),
+                        author.get("tag") or author.get("name") or str(author.get("id", "")),
+                        msg.get("content") or "",
+                        generate_content_hash(msg.get("content")),
+                        msg.get("timestamp") if msg.get("timestamp") is not None else int(time.time() * 1000),
+                        channel.get("id"),
+                        guild_id,
+                    ),
+                )
+            await self._conn.commit()
 
     async def delete_message(self, message_id):
         await self._ensure_open()
@@ -200,31 +199,57 @@ class MessageDB:
         limit = min(limit, 2000)
         async with self._lock:
             if mode == "recent":
-                cursor = await self._conn.execute(
-                    """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
-                       FROM messages WHERE author_id = ? ORDER BY timestamp DESC LIMIT ?""",
-                    (user_id, limit),
-                )
+                if guild_id:
+                    cursor = await self._conn.execute(
+                        """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                           FROM messages WHERE author_id = ? AND guild_id = ? ORDER BY timestamp DESC LIMIT ?""",
+                        (user_id, guild_id, limit),
+                    )
+                else:
+                    cursor = await self._conn.execute(
+                        """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                           FROM messages WHERE author_id = ? ORDER BY timestamp DESC LIMIT ?""",
+                        (user_id, limit),
+                    )
             else:
-                count_row = await self._conn.execute(
-                    "SELECT COUNT(*) as cnt FROM messages WHERE author_id = ?", (user_id,)
-                )
+                if guild_id:
+                    count_row = await self._conn.execute(
+                        "SELECT COUNT(*) as cnt FROM messages WHERE author_id = ? AND guild_id = ?", (user_id, guild_id)
+                    )
+                else:
+                    count_row = await self._conn.execute(
+                        "SELECT COUNT(*) as cnt FROM messages WHERE author_id = ?", (user_id,)
+                    )
                 row = await count_row.fetchone()
                 total = row[0] if row else 0
                 if total == 0:
                     return []
                 if total <= limit:
-                    cursor = await self._conn.execute(
-                        """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
-                           FROM messages WHERE author_id = ? ORDER BY timestamp DESC LIMIT ?""",
-                        (user_id, total),
-                    )
+                    if guild_id:
+                        cursor = await self._conn.execute(
+                            """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                               FROM messages WHERE author_id = ? AND guild_id = ? ORDER BY RANDOM() LIMIT ?""",
+                            (user_id, guild_id, total),
+                        )
+                    else:
+                        cursor = await self._conn.execute(
+                            """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                               FROM messages WHERE author_id = ? ORDER BY RANDOM() LIMIT ?""",
+                            (user_id, total),
+                        )
                 else:
-                    cursor = await self._conn.execute(
-                        """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
-                           FROM messages WHERE author_id = ? ORDER BY RANDOM() LIMIT ?""",
-                        (user_id, limit),
-                    )
+                    if guild_id:
+                        cursor = await self._conn.execute(
+                            """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                               FROM messages WHERE author_id = ? AND guild_id = ? ORDER BY RANDOM() LIMIT ?""",
+                            (user_id, guild_id, limit),
+                        )
+                    else:
+                        cursor = await self._conn.execute(
+                            """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
+                               FROM messages WHERE author_id = ? ORDER BY RANDOM() LIMIT ?""",
+                            (user_id, limit),
+                        )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
@@ -441,10 +466,13 @@ class MessageDB:
             user_c = await self._conn.execute("SELECT COUNT(DISTINCT author_id) as cnt FROM messages")
             users_c = await self._conn.execute("SELECT COUNT(*) as cnt FROM users")
             users_row = await users_c.fetchone()
+            msg_row = await msg_c.fetchone()
+            guild_row = await guild_c.fetchone()
+            author_row = await user_c.fetchone()
             return {
-                "total_messages": (await msg_c.fetchone())[0],
-                "total_guilds": (await guild_c.fetchone())[0],
-                "total_users": (await user_c.fetchone())[0] or users_row[0] if users_row else 0,
+                "total_messages": msg_row[0] if msg_row else 0,
+                "total_guilds": guild_row[0] if guild_row else 0,
+                "total_users": (author_row[0] if author_row else 0) or (users_row[0] if users_row else 0),
             }
 
     # ============== MISSING METHODS ==============

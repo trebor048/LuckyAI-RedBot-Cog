@@ -1,3 +1,2 @@
-from .db_manager import MessageDB
-
+from .manager import MessageDB
 __all__ = ["MessageDB"]
