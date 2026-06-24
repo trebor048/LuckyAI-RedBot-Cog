@@ -2,7 +2,7 @@
     "author": ["Lucky AI Team"],
     "name": "lucky-ai",
     "description": "AI-powered Discord cog for roasts, TLDR summaries, chat Q&A, and hot takes. Supports 7 AI providers with automatic fallback and a streamlined setup flow.",
-    "install_msg": "Cog installed. Run `[p]load lucky_ai` to activate it, then `[p]lsetup` in the target server. `lsettings` also works immediately as a prefix command if you want to skip slash-command setup.",
+    "install_msg": "Install from GitHub with `[p]repo add LuckyAI https://github.com/trebor048/LuckyAI-RedBot-Cog`, then run `[p]cog install LuckyAI lucky_ai`, `[p]load lucky_ai`, and `[p]lsetup` in the target server. `lsettings` also works immediately as a prefix command if you want to skip slash-command setup.",
     "short": "AI roasts, TLDRs, Q&A, and hot takes",
     "tags": ["ai", "roast", "tldr", "fun", "chat", "utility"],
     "requirements": ["aiohttp>=3.9,<4", "aiosqlite>=0.19,<1"],

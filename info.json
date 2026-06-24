@@ -3,7 +3,7 @@
     "name": "lucky-ai",
     "short": "AI-powered roasts, TLDRs, Q&A, and hot takes",
     "description": "Full-featured Discord AI cog with roasts, TLDR summaries, greentext recaps, chat Q&A, and hot takes. Supports 7 AI providers (NVIDIA, Groq, OpenAI, Moonshot, DeepSeek, Zhipu AI, OpenRouter) with automatic fallback. Interactive settings UI, per-guild configuration, cooldowns, opt-out, and blacklist support.",
-    "install_msg": "Repository installed. Run `[p]cog install <reponame> lucky_ai`, then `[p]load lucky_ai` and `[p]lsetup` in the server you want to configure. `lsettings` also works immediately as a prefix command.",
+    "install_msg": "Install from GitHub with `[p]repo add LuckyAI https://github.com/trebor048/LuckyAI-RedBot-Cog`, then run `[p]cog install LuckyAI lucky_ai`, `[p]load lucky_ai`, and `[p]lsetup` in the target server. `lsettings` also works immediately as a prefix command.",
     "requirements": [
         "aiohttp>=3.9,<4",
         "aiosqlite>=0.19,<1"

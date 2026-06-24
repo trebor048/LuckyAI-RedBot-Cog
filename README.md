@@ -1,6 +1,6 @@
 # Lucky AI - Discord AI Cog for Red-DiscordBot
 
-Lucky AI is a drop-in Red cog for AI roasts, TL;DRs, chat Q&A, hot takes, and server-specific chat analysis. Install it, run setup, and it stores runtime data inside Red's cog data directory instead of the repository.
+Lucky AI is a drop-in Red cog for AI roasts, TL;DRs, chat Q&A, hot takes, and server-specific chat analysis. Install it from GitHub, load it into Red, run setup, and it stores runtime data inside Red's cog data directory instead of the repository.
 
 ## What You Get
 
@@ -38,13 +38,13 @@ At least one provider API key is required. Keys are stored through Red's shared 
 [p]load lucky_ai
 ```
 
-Then run:
+Then run setup in the target server:
 
 ```py
 [p]lsetup
 ```
 
-If you want slash settings later, you can enable them, but it is optional because `lsettings` works immediately as a normal command:
+If you want slash settings later, you can enable them, but it is optional because `lsettings` also works as a prefix command:
 
 ```py
 [p]slash enable lsettings
