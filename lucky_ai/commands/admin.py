@@ -10,7 +10,7 @@ class AdminCommands:
 
     # --- Stats ---
 
-    async def build_stats(self, ctx):
+    async def build_stats(self, ctx, verbose: bool = False):
         try:
             db_stats = await self.db.get_database_stats()
         except Exception as e:
@@ -41,22 +41,68 @@ class AdminCommands:
         for r in cmd_stats:
             pct = round((r["cnt"] / total_cmds * 100)) if total_cmds else 0
             bars = "🔷" * (pct // 10) if pct else ""
-            cmd_lines.append(f"`;{r['command']}:` {r['cnt']} `{bars}` {pct}%")
+            cmd_lines.append(f"`{ctx.clean_prefix}{r['command']}`: {r['cnt']} `{bars}` {pct}%")
         cmd_usage = "\n".join(cmd_lines) if cmd_lines else "No commands logged yet."
-        if len(cmd_usage) > 1000:
-            cmd_usage = cmd_usage[:997] + "..."
+        total_line = f"\n**Total:** {total_cmds:,}"
+        max_value_len = 1024
+        if len(cmd_usage) + len(total_line) > max_value_len:
+            trim_to = max_value_len - len(total_line) - 3
+            cmd_usage = cmd_usage[:max(0, trim_to)] + "..."
 
         async with self.config.guild(ctx.guild).all() as cfg:
-            typing_enabled = cfg.get("typing_enabled", True)
+            hot_take_enabled = cfg.get("hot_take_enabled", False)
+            provider_order = cfg.get("provider_order")
 
-        return {
+        payload = {
             "title": "📊 Bot Statistics",
             "color": 0x4DABF7,
             "fields": [
                 {"name": "🗄️ Database", "value": f"Messages: **{db_stats.get('total_messages', 0):,}**\nGuilds: **{db_stats.get('total_guilds', 0)}**\nUsers: **{db_stats.get('total_users', 0)}**", "inline": True},
                 {"name": "⏱️ Uptime", "value": uptime_str, "inline": True},
                 {"name": "💓 Health", "value": f"Status: **healthy**\nGuilds: **{len(self.bot.guilds)}**\nLatency: **{round(self.bot.latency * 1000)}ms**", "inline": True},
-                {"name": "📈 Command Usage (7 days)", "value": cmd_usage + f"\n**Total:** {total_cmds:,}", "inline": False},
-                {"name": "⚙️ Features", "value": f"Typing Indicator: **{'ON 🟢' if typing_enabled else 'OFF 🔴'}**\nSync: **{'ON' if self.cog.message_sync_enabled else 'OFF'}**\nHot Takes: **{'ON' if self.cog.hot_take_enabled else 'OFF'}**", "inline": False},
+                {"name": "📈 Command Usage (7 days)", "value": cmd_usage + total_line, "inline": False},
+                {"name": "⚙️ Features", "value": f"Sync: **{'ON' if self.cog.message_sync_enabled else 'OFF'}**\nHot Takes: **{'ON' if hot_take_enabled else 'OFF'}**", "inline": False},
             ],
         }
+        if verbose:
+            metrics = self.ai_service.get_metrics() if hasattr(self.ai_service, "get_metrics") else {}
+            effective_order = []
+            if hasattr(self.ai_service, "get_effective_provider_order"):
+                effective_order = await self.ai_service.get_effective_provider_order(
+                    guild_id=ctx.guild.id,
+                    configured_order=provider_order,
+                )
+            provider_lines = []
+            for provider, vals in (metrics.get("providers", {}) or {}).items():
+                probe = vals.get("probe_status", "unknown")
+                circuit = " open" if vals.get("circuit_open") else ""
+                provider_lines.append(
+                    f"`{provider}` ok:{vals.get('ok',0)} fail:{vals.get('fail',0)} "
+                    f"avg:{vals.get('avg_latency_ms',0)}ms probe:{probe}{circuit}"
+                )
+            if not provider_lines:
+                provider_lines = ["No provider metrics yet."]
+            payload["fields"].append(
+                {
+                    "name": "🧠 AI Runtime",
+                    "value": (
+                        f"Requests: **{metrics.get('requests', 0)}**\n"
+                        f"Success: **{metrics.get('success', 0)}**\n"
+                        f"Errors: **{metrics.get('errors', 0)}**\n"
+                        f"Fallback Success: **{metrics.get('fallback_success', 0)}**"
+                    ),
+                    "inline": False,
+                }
+            )
+            payload["fields"].append(
+                {"name": "📡 Provider Health", "value": "\n".join(provider_lines)[:1000], "inline": False}
+            )
+            if effective_order:
+                payload["fields"].append(
+                    {
+                        "name": "🔀 Learned Fallback Order",
+                        "value": " → ".join(effective_order)[:1000],
+                        "inline": False,
+                    }
+                )
+        return payload

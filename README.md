@@ -1,116 +1,134 @@
 # Lucky AI - Discord AI Cog for Red-DiscordBot
 
-AI-powered roasting, TLDR summaries, chat Q&A, debate judging, and hot takes - all in one cog. Supports **7 AI providers** with automatic fallback.
+Lucky AI is a drop-in Red cog for AI roasts, TL;DRs, chat Q&A, hot takes, and server-specific chat analysis. Install it, run setup, and it stores runtime data inside Red's cog data directory instead of the repository.
 
----
+## What You Get
 
-## Features
+- `lroast @user [style]` for message-history roasts
+- `ltldr [count] [style]` for summaries and greentext recaps
+- `lask <question>` for general Q&A
+- `lask 300 <question>` to fetch that many recent messages and send them to the AI as context
+- `lhtt on|off|fire` for hot takes
+- `lsettings` or `/lsettings` for interactive server settings
+- `lsetup` for first-run setup
+- `lconfig ...` for sync channels, blacklist, backfill, admin role, and enable/disable
+- `loptout in|out` for per-user opt-out
+- `lstats` for DB and health stats
+- `lhelp` for the full command list
 
-All commands use the `l` prefix. `/lsettings` is available as a slash command for admin settings.
+All commands also work without the Red prefix, so `lroast`, `ltldr`, `lask`, and the rest can be used directly if you prefer.
 
-| Command | Description |
-|---------|-------------|
-| `lroast @user` | Generate a personal AI roast from their message history |
-| `ltldr [count] [style]` | Summarize the last N chat messages (normal or greentext) |
-| `lask <question>` | Chat with the AI using recent channel context |
-| `ldebate` | Judge the last argument in chat - picks a winner |
-| `lhtt fire` | Fire an automated "hot take" based on channel vibe |
-| `/lsettings` | Interactive UI for model, temperature, styles, fetch mode, and API keys (slash command) |
-| `lsetup` | Step-by-step wizard to configure API keys and test endpoints |
-| `loptout` | Opt in/out of being roasted |
-| `lstats` | View bot usage stats and health |
-| `lhelp` | Show all commands |
-| `lconfig` | Manage sync channels, blacklist, admin role |
+## Supported Providers
 
----
+- NVIDIA
+- Groq
+- OpenAI
+- Moonshot
+- DeepSeek
+- Zhipu AI
+- OpenRouter
 
-## Supported AI Providers
+At least one provider API key is required. Keys are stored through Red's shared API token system, so they are bot-wide, not per guild.
 
-- **NVIDIA** - `NVIDIA_API_KEY`
-- **Groq** - `GROQ_API_KEY`
-- **OpenAI** - `OPENAI_API_KEY`
-- **Moonshot** - `MOONSHOT_API_KEY`
-- **DeepSeek** - `DEEPSEEK_API_KEY`
-- **Z-AI** - `ZAI_API_KEY`
-- **OpenRouter** - `OPENROUTER_KEY`
-
-At least one provider must be configured. The bot will automatically fall back to another provider if the primary fails.
-
----
-
-## Installation
+## Install
 
 ```py
-[p]repo add LuckyAI https://github.com/trebor048/LuckyAI-RedBot-Cog "I agree"
-[p]cog install LuckyAI lucky-ai
-[p]load lucky-ai
+[p]repo add LuckyAI https://github.com/trebor048/LuckyAI-RedBot-Cog
+[p]cog install LuckyAI lucky_ai
+[p]load lucky_ai
 ```
 
-Then run the interactive setup:
+Then run:
 
-```
-[lsetup
-```
-
-Or save API keys directly via Red's API system:
-
-```
-[lset api openai api_key YOUR_KEY
-[lset api groq api_key YOUR_KEY
+```py
+[p]lsetup
 ```
 
----
+If you want slash settings later, you can enable them, but it is optional because `lsettings` works immediately as a normal command:
 
-## Quick Start
+```py
+[p]slash enable lsettings
+[p]slash sync
+```
 
-1. **Install & load** the cog
-2. Run **`lsetup`** - the wizard walks you through API keys, endpoint testing, and model selection
-3. Add a sync channel: **`lconfig channels add #general`**
-4. Start roasting: **`lroast @user`**
-5. See all commands: **`lhelp`**
-6. Tune settings: **`lsettings`**
+## First Run
 
----
+1. Load the cog.
+2. Run `lsetup` in the server and channel you want to use first.
+3. Add API keys in the setup wizard.
+4. Finish setup.
+5. Start using `lroast`, `ltldr`, and `lask`.
+
+What setup does:
+
+- verifies the selected provider before finishing
+- enables live message sync
+- adds the current channel to the sync list when the bot has permission
+- starts a 14-day backfill for that channel when possible
 
 ## Configuration
 
-All per-guild settings are available through **`lsettings`**:
+`lsettings` is the main server settings UI. It uses four pages:
 
-- **API Keys** - set, change, or remove keys for any provider
-- **Model** - pick from any provider's models
-- **Temperature / Top P / Top K** - tune generation creativity
-- **Frequency / Presence Penalty** - control repetition
-- **Roast Styles** - switch between clinical, sarcastic, blunt, analytical, disappointed, or custom
-- **Fetch Mode** - recent messages or random sampling
-- **Admin Role** - restrict admin commands to a specific role
+- Model and style
+- Generation parameters
+- API keys
+- Advanced options
 
----
+Notes:
 
-## Message Syncing
+- API keys are bot-wide shared tokens.
+- Custom roast styles are stored per server.
+- The current model and generation settings are per server.
+- `lconfig` controls sync channels, backfill, blacklist, admin role, and the global enable toggle.
 
-The cog stores messages in a local SQLite database (`messages.db`). To start syncing:
+The `ask` command has two modes:
 
-```
-lconfig channels add #channel
-lconfig channels remove #channel
-lconfig channels list
-```
+- `lask what is going on here?` asks a general question.
+- `lask 300 what is going on here?` fetches 300 recent messages first and gives that context to the AI.
 
-Synced messages are used for roasting, TLDR, debate, and ask commands.
+## Permissions and Intents
 
----
+Lucky AI expects the bot to have:
 
-## Data Privacy
+- Message Content intent
+- View Channel
+- Send Messages
+- Read Message History
+- Embed Links
+- Manage Messages
+- Attach Files
 
-- Users can opt out of being roasted with `loptout out`
-- Opted-out users' messages are excluded from roast/analysis
-- Users can be blacklisted by admins (`lconfig blacklist add @user`)
-- Message data is stored only for explicitly configured sync channels
+The bot only stores message content from channels that admins explicitly add to sync.
 
----
+## Data and Privacy
+
+- Runtime data is stored in Red's cog data directory.
+- Message storage is limited to configured sync channels.
+- Users can opt out with `loptout out`.
+- Opting out deletes that user's stored messages for the server and blocks future storage.
+- Red data deletion requests are supported.
+- Custom styles are per-server, not global.
+
+## Troubleshooting
+
+- No responses: check that provider API keys are set and valid.
+- Nothing is syncing: confirm the channel is on the sync list and the bot has Read Message History.
+- `lsettings` not showing as slash: use `lsettings` as a prefix command, or enable and sync the slash command.
+- `lsetup` says the provider is not ready: update the key in `lsetup` or `lsettings` and try again.
+- The bot looks disabled: check `lconfig toggle`, server permissions, and Red's cog-disable state.
 
 ## Requirements
 
-- Red-DiscordBot **3.5.0 - 3.6.0**
-- `aiohttp>=3.9.0`
-- `aiosqlite>=0.19.0`
+- Red-DiscordBot 3.5+
+- Python 3.8+
+- `aiohttp`
+- `aiosqlite`
+
+## Development Checks
+
+```powershell
+python -m compileall lucky_ai tests
+python -m unittest discover -v
+ruff check lucky_ai tests
+```

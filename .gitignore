@@ -4,11 +4,17 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+.coverage
 
 # Database
 *.db
 *.db-shm
 *.db-wal
+config/
 
 # Environment
 .env
@@ -29,6 +35,7 @@ Thumbs.db
 
 # Git
 .git/
+tests/
 
 # Agents & Notes
 AGENTS.md

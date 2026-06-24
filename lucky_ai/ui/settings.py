@@ -8,21 +8,21 @@ import discord
 from discord.ui import View, Modal, Select, Button, TextInput
 
 from ..providers import PROVIDER_ORDER, PROVIDER_LABELS, PROVIDERS
+from ..utils import DEFAULT_PERSONALITIES, set_shared_api_key
 
-log = logging.getLogger("red.LuckyAICog.settings_ui")
+log = logging.getLogger("red.lucky_ai.settings_ui")
 
-PAGE_ORDER = ["model", "parameters", "apikeys", "fetch", "endpoints", "advanced"]
+PAGE_ORDER = ["model", "parameters", "apikeys", "advanced"]
 
 PAGE_TITLES = {
-    "model": ("Model Selection", "🤖"),
-    "parameters": ("Generation Parameters", "⚙️"),
+    "model": ("Model & Style", "🤖"),
+    "parameters": ("Generation Parameters", "\u2699\ufe0f"),
     "apikeys": ("API Keys", "🔑"),
-    "fetch": ("Message Fetching", "📨"),
-    "endpoints": ("Test Endpoints", "🔍"),
-    "advanced": ("Advanced Settings", "🔧"),
+    "advanced": ("Advanced", "\U0001F527"),
 }
 
 SESSION_TIMEOUT = 900
+MAX_STYLES_TOTAL = 24
 
 _config_file_lock = asyncio.Lock()
 
@@ -33,9 +33,46 @@ def _mask_key(key):
     return key[:6] + "..." + key[-4:]
 
 
+def _merge_personalities(custom_personalities):
+    personalities = dict(DEFAULT_PERSONALITIES)
+    if isinstance(custom_personalities, dict):
+        for key, value in custom_personalities.items():
+            style_name = str(key).strip()
+            style_text = str(value).strip() if value is not None else ""
+            if not style_name or style_name in DEFAULT_PERSONALITIES or not style_text:
+                continue
+            personalities[style_name] = style_text
+    return personalities
+
+
+def _load_models_sync(cog):
+    """Load model metadata synchronously (called once per settings session, not per render)."""
+    models = {}
+    config_path = cog.config_json_path
+    try:
+        with open(config_path, "r") as f:
+            data = json.load(f)
+        models.update(data.get("MODELS", {}))
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    for pid, info in PROVIDERS.items():
+        default = info.get("default_model", "")
+        if default and default not in models:
+            parts = default.split("/")
+            actual = "/".join(parts[1:]) if len(parts) > 1 else parts[0]
+            display = parts[-1] if parts else actual
+            name = display.replace("-", " ").title()
+            models[default] = {
+                "name": f"{info['label']} - {name}",
+                "provider": pid,
+                "actualModelId": actual,
+            }
+    return models
+
+
 async def _read_config_json(config_path):
     async with _config_file_lock:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _read():
             try:
@@ -49,30 +86,46 @@ async def _read_config_json(config_path):
 
 async def _write_config_json(config_path, data):
     async with _config_file_lock:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _write():
-            with open(config_path, "w") as f:
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+            temp_path = f"{config_path}.tmp"
+            with open(temp_path, "w") as f:
                 json.dump(data, f, indent=2)
+            os.replace(temp_path, config_path)
 
         await loop.run_in_executor(None, _write)
 
 
+async def _edit_settings_panel(interaction: discord.Interaction, cog, session_id, user_id, guild_id, *, content=None):
+    try:
+        view = SettingsView(cog, session_id, user_id, guild_id)
+    except ValueError:
+        await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+        return False
+    embed = await view.build_embed()
+    if content is None:
+        await interaction.response.edit_message(embed=embed, view=view)
+    else:
+        await interaction.response.edit_message(content=content, embed=embed, view=view)
+    return True
+
+
 async def _run_endpoint_tests(cog):
-    results = []
-    for provider in PROVIDER_ORDER:
+    async def _test(provider):
         try:
-            result = await cog.ai_service._test_endpoint(provider)
-            results.append(result)
+            return await cog.ai_service._test_endpoint(provider)
         except Exception as e:
             log.error("Test endpoint failed for %s: %s", provider, e)
-            results.append({
+            return {
                 "name": PROVIDER_LABELS.get(provider, provider),
                 "status": "network_error",
                 "latency": None,
                 "message": str(e),
-            })
-    return results
+            }
+
+    return await asyncio.gather(*[_test(provider) for provider in PROVIDER_ORDER])
 
 
 def _build_test_results_embed(results, cog, session_id, user_id):
@@ -88,35 +141,35 @@ def _build_test_results_embed(results, cog, session_id, user_id):
         name = r.get("name", "Unknown")
         if status == "valid":
             text = f"Valid - {r.get('latency', '?')}ms"
-            icon = "✅"
+            icon = ":white_check_mark:"
         elif status == "invalid":
             text = "Invalid API Key"
-            icon = "❌"
+            icon = ":x:"
         elif status == "not_configured":
             text = "Not configured"
             icon = "⚪"
         elif status == "rate_limited":
             text = "Rate limited (key may be valid)"
-            icon = "⚠️"
+            icon = ":warning:️"
         elif status == "network_error":
-            text = f"Network error: {r.get('message', '')}"
-            icon = "🌐"
+            text = f"Network error: {r.get('message', '')}"[:1024]
+            icon = ":globe_with_meridians:"
         else:
-            text = r.get("message", "Unknown error")
-            icon = "❌"
+            text = str(r.get("message", "Unknown error"))[:1024]
+            icon = ":x:"
         results_embed.add_field(name=f"{icon} {name}", value=text, inline=True)
-    summary_parts = [f"✅ Valid: {valid}"]
+    summary_parts = [f":white_check_mark: Valid: {valid}"]
     if invalid:
-        summary_parts.append(f"❌ Invalid: {invalid}")
+        summary_parts.append(f":x: Invalid: {invalid}")
     if not_cfg:
         summary_parts.append(f"⚪ Not configured: {not_cfg}")
     if rate_lim:
-        summary_parts.append(f"⚠️ Rate limited: {rate_lim}")
+        summary_parts.append(f":warning:️ Rate limited: {rate_lim}")
     if errors:
         summary_parts.append(f"🔴 Errors: {errors}")
-    results_embed.add_field(name="📊 Summary", value="\n".join(summary_parts) or "No providers configured", inline=False)
-    view = View(timeout=SESSION_TIMEOUT)
-    view.add_item(NavButton("🔄 Test Again", "test_again", session_id, cog, user_id))
+    results_embed.add_field(name=":bar_chart: Summary", value="\n".join(summary_parts) or "No providers configured", inline=False)
+    view = OwnerOnlyView(user_id, timeout=SESSION_TIMEOUT)
+    view.add_item(NavButton("\U0001F504 Test Again", "test_again", session_id, cog, user_id))
     view.add_item(NavButton("✖ Close", "close", session_id, cog, user_id))
     return results_embed, view
 
@@ -163,48 +216,7 @@ class ParamModal(Modal):
             cfg[self.key] = value
         log.info("SETTINGS_UI %s updated to %s", self.key, value)
 
-        view = SettingsView(self.cog, self.session_id, interaction.user.id, guild_id)
-        view.session["current_page"] = "parameters"
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class NewStyleModal(Modal):
-    def __init__(self, session_id, cog):
-        super().__init__(title="New Style", timeout=300)
-        self.session_id = session_id
-        self.cog = cog
-        self.add_item(
-            TextInput(
-                label="Style guidance",
-                placeholder="e.g. Focus on their terrible taste in music and failed life choices",
-                style=discord.TextStyle.paragraph,
-                required=True,
-                max_length=1000,
-            )
-        )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        style_text = self.children[0].value.strip()
-        if not style_text:
-            await interaction.response.send_message(":x: Style text is required", ephemeral=True)
-            return
-        guild_id = interaction.guild_id
-        style_name = f"custom-{int(time.time() * 1000)}"
-        config_path = os.path.join(self.cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        personalities = data.get("PERSONALITIES", {})
-        personalities[style_name] = style_text
-        data["PERSONALITIES"] = personalities
-        await _write_config_json(config_path, data)
-        async with self.cog.config.guild_from_id(guild_id).all() as cfg:
-            cfg["promptKey"] = style_name
-        log.info("SETTINGS_UI New style created: %s", style_name)
-
-        view = SettingsView(self.cog, self.session_id, interaction.user.id, guild_id)
-        view.session["current_page"] = "parameters"
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self.cog, self.session_id, interaction.user.id, guild_id)
 
 
 class AddStyleModal(Modal):
@@ -243,19 +255,29 @@ class AddStyleModal(Modal):
         if not style_name or not style_prompt:
             await interaction.response.send_message(":x: Both name and prompt are required.", ephemeral=True)
             return
-        config_path = os.path.join(self.cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        personalities = data.get("PERSONALITIES", {})
-        personalities[style_name] = style_prompt
-        data["PERSONALITIES"] = personalities
-        await _write_config_json(config_path, data)
-        log.info("SETTINGS_UI Style added: %s", style_name)
-
         guild_id = interaction.guild_id
-        view = SettingsView(self.cog, self.session_id, interaction.user.id, guild_id)
-        view.session["current_page"] = "advanced"
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        async with self.cog.config.guild_from_id(guild_id).all() as cfg:
+            custom_personalities = dict(cfg.get("custom_personalities", {}))
+            if style_name in DEFAULT_PERSONALITIES or style_name in custom_personalities:
+                await interaction.response.send_message(
+                    ":x: That style key already exists. Pick a different name.",
+                    ephemeral=True,
+                )
+                return
+            if len(custom_personalities) >= MAX_STYLES_TOTAL:
+                await interaction.response.send_message(
+                    f":x: Style limit reached ({MAX_STYLES_TOTAL} total). Remove an existing style before adding a new one.",
+                    ephemeral=True,
+                )
+                return
+            custom_personalities[style_name] = style_prompt
+            cfg["custom_personalities"] = custom_personalities
+            cfg["promptKey"] = style_name
+        session = self.cog.settings_sessions.get(self.session_id)
+        if session is not None:
+            session["personalities"] = _merge_personalities(custom_personalities)
+        log.info("SETTINGS_UI Style added: %s", style_name)
+        await _edit_settings_panel(interaction, self.cog, self.session_id, interaction.user.id, guild_id)
 
 
 class SettingsView(View):
@@ -267,47 +289,28 @@ class SettingsView(View):
         self.guild_id = guild_id
         self.session = cog.settings_sessions.get(session_id)
         if self.session is None:
-            self.session = {
-                "current_page": "model",
-                "model_page": 0,
-                "prompt_page": 0,
-                "show_model_dropdown": False,
-                "show_prompt_dropdown": False,
-            }
-            cog.settings_sessions[session_id] = self.session
+            raise ValueError(f"Settings session {session_id} not found")
+        self.session["_last_accessed"] = time.time() * 1000
+        if "models" not in self.session:
+            self.session["models"] = _load_models_sync(self.cog)
         self._build_components()
 
     def _build_components(self):
         self.clear_items()
+        self.add_item(PageSelect(self.session_id, self.cog, self.user_id, self.session["current_page"]))
         page = self.session["current_page"]
-        self._add_nav_buttons()
         if page == "model":
             self._add_model_components()
         elif page == "parameters":
             self._add_parameter_components()
         elif page == "apikeys":
             self._add_apikeys_components()
-        elif page == "fetch":
-            self._add_fetch_components()
-        elif page == "endpoints":
-            self._add_endpoints_components()
         elif page == "advanced":
             self._add_advanced_components()
 
-    def _add_nav_buttons(self):
-        page_index = PAGE_ORDER.index(self.session["current_page"])
-        if page_index > 0:
-            self.add_item(NavButton("◀ Page", "prev", self.session_id, self.cog, self.user_id))
-        self.add_item(NavButton("✖ Close", "close", self.session_id, self.cog, self.user_id))
-        if page_index < len(PAGE_ORDER) - 1:
-            self.add_item(NavButton("Page ▶", "next", self.session_id, self.cog, self.user_id))
-
     def _add_model_components(self):
-        self.add_item(ToggleModelDropdownButton(self.session_id, self.cog, self.user_id))
-        if self.session.get("show_model_dropdown"):
-            self.add_item(ModelSelect(self.session_id, self.cog, self.user_id, self.session.get("model_page", 0)))
-            self.add_item(ModelPageButton("◀ Models", "prev", self.session_id, self.cog, self.user_id))
-            self.add_item(ModelPageButton("Models ▶", "next", self.session_id, self.cog, self.user_id))
+        self.add_item(ModelSelect(self.session_id, self.cog, self.user_id))
+        self.add_item(PromptSelect(self.session_id, self.cog, self.user_id))
 
     def _add_parameter_components(self):
         for param_key, param_info in [
@@ -318,27 +321,24 @@ class SettingsView(View):
             ("topk", "Top K"), ("freq", "Freq Penalty"), ("pres", "Pres Penalty"),
         ]:
             self.add_item(ParamButton(param_key, param_info, self.session_id, self.cog, self.user_id))
-        self.add_item(TogglePromptDropdownButton(self.session_id, self.cog, self.user_id))
-        if self.session.get("show_prompt_dropdown"):
-            self.add_item(PromptSelect(self.session_id, self.cog, self.user_id, self.session.get("prompt_page", 0)))
-            self.add_item(PromptPageButton("◀ Styles", "prev", self.session_id, self.cog, self.user_id))
-            self.add_item(PromptPageButton("Styles ▶", "next", self.session_id, self.cog, self.user_id))
 
     def _add_apikeys_components(self):
         for provider in PROVIDER_ORDER:
             self.add_item(ApiKeyButton(provider, self.session_id, self.cog, self.user_id))
 
-    def _add_fetch_components(self):
+    def _add_advanced_components(self):
         self.add_item(FetchModeSelect(self.session_id, self.cog, self.user_id))
         self.add_item(ToggleRandomButton(self.session_id, self.cog, self.user_id))
-
-    def _add_endpoints_components(self):
+        self.add_item(HotTakeConfigButton(self.session_id, self.cog, self.user_id))
         self.add_item(TestEndpointsButton(self.session_id, self.cog, self.user_id))
-
-    def _add_advanced_components(self):
-        self.add_item(ResetButton(self.session_id, self.cog, self.user_id))
         self.add_item(AddStyleButton(self.session_id, self.cog, self.user_id))
         self.add_item(RemoveStyleButton(self.session_id, self.cog, self.user_id))
+        self.add_item(ProviderOrderSelect(self.session_id, self.cog, self.user_id))
+        self.add_item(MoveUpButton(self.session_id, self.cog, self.user_id))
+        self.add_item(MoveDownButton(self.session_id, self.cog, self.user_id))
+        self.add_item(SaveOrderButton(self.session_id, self.cog, self.user_id))
+        self.add_item(ResetOrderButton(self.session_id, self.cog, self.user_id))
+        self.add_item(ResetButton(self.session_id, self.cog, self.user_id))
 
     async def build_embed(self):
         page_key = self.session["current_page"]
@@ -353,22 +353,23 @@ class SettingsView(View):
                 self._build_model_embed(embed, cfg)
             elif page_key == "parameters":
                 self._build_parameter_embed(embed, cfg)
-            elif page_key == "fetch":
-                self._build_fetch_embed(embed, cfg)
             elif page_key == "apikeys":
                 await self._build_apikeys_embed(embed)
-            elif page_key == "endpoints":
-                self._build_endpoints_embed(embed)
             elif page_key == "advanced":
                 self._build_advanced_embed(embed, cfg)
             return embed
 
     def _build_model_embed(self, embed, cfg):
-        model = cfg.get("model", PROVIDERS["nvidia"]["default_model"])
+        model = cfg.get("model", PROVIDERS[PROVIDER_ORDER[0]]["default_model"])
         provider_key = model.split("/")[0] if "/" in model else model
         embed.add_field(name="🤖 Current Model", value=f"`{model}`", inline=False)
         embed.add_field(name="📡 Provider", value=PROVIDER_LABELS.get(provider_key, provider_key), inline=True)
-        embed.add_field(name="📏 Context Length", value="Varies by model", inline=True)
+        embed.add_field(name=":memo: Active Style", value=f"`{cfg.get('promptKey', 'base')}`", inline=True)
+        embed.add_field(
+            name="🧩 Style Scope",
+            value="Built-in styles are shared. Custom styles are stored per server.",
+            inline=False,
+        )
 
     def _build_parameter_embed(self, embed, cfg):
         embed.color = 0x7c3aed
@@ -380,74 +381,189 @@ class SettingsView(View):
             f"**Freq:** `{cfg.get('frequency_penalty', 0.4)}`",
             f"**Pres:** `{cfg.get('presence_penalty', 0.2)}`",
         ])
-        embed.add_field(name="⚙️ Generation Parameters", value=param_lines, inline=False)
-        embed.add_field(name="📝 Active Style", value=f"`{cfg.get('promptKey', 'base')}`", inline=False)
-
-    def _build_fetch_embed(self, embed, cfg):
-        embed.color = 0x10a37f
-        mode = cfg.get("messageFetchMode", "random")
-        fetch_emoji = "📬" if mode == "recent" else "🎲"
-        random_emoji = "✅" if cfg.get("randomMode", False) else "❌"
-        embed.add_field(
-            name=f"{fetch_emoji} Fetch Mode",
-            value="**Recent** (latest messages)" if mode == "recent" else "**Random** (varied history)",
-            inline=False,
-        )
-        embed.add_field(
-            name=f"{random_emoji} Random Style",
-            value="Picks random user from message pool" if cfg.get("randomMode") else "Selects based on message order",
-            inline=False,
-        )
+        embed.add_field(name=":gear:️ Generation Parameters", value=param_lines, inline=False)
 
     async def _build_apikeys_embed(self, embed):
         embed.color = 0xf59e0b
-        embed.description = "Click a provider below to **set, change, or remove** its API key.\nKeys are stored securely via Red's API token system."
+        embed.description = (
+            "Click a provider below to **set, change, or remove** its API key.\n"
+            "Keys are stored securely via Red's API token system and changing one affects every guild using this bot."
+        )
         lines = []
         for p in PROVIDER_ORDER:
-            tokens = await self.cog.bot.get_shared_api_tokens(p)
+            try:
+                tokens = await self.cog.bot.get_shared_api_tokens(p)
+            except Exception as e:
+                log.debug("SETTINGS_UI Failed to read API tokens for %s: %s", p, e)
+                tokens = {}
             full_key = tokens.get("api_key", "") if tokens else ""
             has_key = bool(full_key)
             masked = _mask_key(full_key) if has_key else ""
-            icon = "✅" if has_key else "❌"
+            icon = ":white_check_mark:" if has_key else ":x:"
             label = PROVIDER_LABELS.get(p, p)
             parts = [f"{icon} **{label}**"]
             if masked:
                 parts.append(f"`{masked}`")
             lines.append(" ".join(parts))
         embed.add_field(name="Provider Status", value="\n".join(lines), inline=False)
-        embed.add_field(name="🔑 Quick Actions", value="Configured keys are tested automatically.\nUse the **Endpoints** page to verify they work.", inline=False)
-        embed.set_footer(text="API keys are stored in Red's shared API token storage")
-
-    def _build_endpoints_embed(self, embed):
-        embed.color = 0x40a7d6
-        embed.description = 'Click **"Test All Endpoints"** below to verify your API keys are working.'
-        embed.add_field(
-            name="🧪 Available Providers",
-            value=" - ".join(p.capitalize() for p in PROVIDER_ORDER),
-            inline=False,
-        )
-        embed.add_field(name="📡 Test Status", value="⏳ Click the button to begin testing", inline=False)
 
     def _build_advanced_embed(self, embed, cfg):
         embed.color = 0x6366f1
+        mode = cfg.get("messageFetchMode", "random")
+        fetch_emoji = "📬" if mode == "recent" else "🎲"
+        random_emoji = ":white_check_mark:" if cfg.get("randomMode", False) else ":x:"
+        embed.add_field(
+            name=f"{fetch_emoji} Fetch Mode",
+            value="**Recent** (latest messages)" if mode == "recent" else "**Random** (varied history)",
+            inline=True,
+        )
+        embed.add_field(
+            name=f"{random_emoji} Random Style",
+            value="On" if cfg.get("randomMode") else "Off",
+            inline=True,
+        )
+        raw_order = cfg.get("provider_order") or list(PROVIDER_ORDER)
+        order = []
+        seen = set()
+        for provider in raw_order:
+            if provider in PROVIDER_ORDER and provider not in seen:
+                order.append(provider)
+                seen.add(provider)
+        for provider in PROVIDER_ORDER:
+            if provider not in seen:
+                order.append(provider)
+                seen.add(provider)
+        order_labels = " → ".join(PROVIDER_LABELS.get(p, p) for p in order)
+        embed.add_field(
+            name="🧭 Provider Order",
+            value=order_labels[:1000] if order_labels else "Default registry order",
+            inline=False,
+        )
+        embed.add_field(
+            name="🔥 Hot Take Tuning",
+            value=(
+                f"Window: `{cfg.get('hot_take_window_minutes', 5)}m` | "
+                f"Cooldown: `{cfg.get('hot_take_cooldown_minutes', 120)}m`\n"
+                f"Min Msg: `{cfg.get('hot_take_min_messages', 10)}` | "
+                f"Prob: `{cfg.get('hot_take_probability', 0.05)}`\n"
+                f"Context Msg: `{cfg.get('hot_take_context_messages', 100)}`"
+            ),
+            inline=False,
+        )
         settings_json = json.dumps(dict(cfg), indent=2)
-        truncated = settings_json[:900] + ("..." if len(settings_json) > 900 else "")
-        embed.add_field(name="📋 All Settings (JSON)", value=f"```json\n{truncated}\n```", inline=False)
+        truncated = settings_json[:800] + ("..." if len(settings_json) > 800 else "")
+        embed.add_field(name="📋 All Settings", value=f"```json\n{truncated}\n```", inline=False)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(":x: This isn't your settings panel.", ephemeral=True)
             return False
+        session = self.cog.settings_sessions.get(self.session_id)
+        if session is None:
+            await interaction.response.send_message(":x: Session expired. Open `lsettings` or `/lsettings` again.", ephemeral=True)
+            return False
+        session["_last_accessed"] = time.time() * 1000
         return True
 
     async def on_timeout(self):
         self.cog.settings_sessions.pop(self.session_id, None)
 
 
+class HotTakeConfigModal(Modal):
+    def __init__(self, session_id, cog, current):
+        super().__init__(title="Hot Take Settings", timeout=300)
+        self._session_id = session_id
+        self._cog = cog
+        self.add_item(TextInput(label="Window Minutes (1-120)", default=str(current.get("hot_take_window_minutes", 5)), max_length=4))
+        self.add_item(TextInput(label="Cooldown Minutes (1-1440)", default=str(current.get("hot_take_cooldown_minutes", 120)), max_length=5))
+        self.add_item(TextInput(label="Min Messages (1-200)", default=str(current.get("hot_take_min_messages", 10)), max_length=4))
+        self.add_item(TextInput(label="Probability (0.0-1.0)", default=str(current.get("hot_take_probability", 0.05)), max_length=6))
+        self.add_item(TextInput(label="Context Messages (5-500)", default=str(current.get("hot_take_context_messages", 100)), max_length=4))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            window = int(self.children[0].value.strip())
+            cooldown = int(self.children[1].value.strip())
+            min_msgs = int(self.children[2].value.strip())
+            prob = float(self.children[3].value.strip())
+            ctx_msgs = int(self.children[4].value.strip())
+        except ValueError:
+            await interaction.response.send_message(":x: Invalid hot-take setting values.", ephemeral=True)
+            return
+        if not (1 <= window <= 120 and 1 <= cooldown <= 1440 and 1 <= min_msgs <= 200 and 0 <= prob <= 1 and 5 <= ctx_msgs <= 500):
+            await interaction.response.send_message(":x: One or more values are out of allowed range.", ephemeral=True)
+            return
+        guild_id = interaction.guild_id
+        async with self._cog.config.guild_from_id(guild_id).all() as cfg:
+            cfg["hot_take_window_minutes"] = window
+            cfg["hot_take_cooldown_minutes"] = cooldown
+            cfg["hot_take_min_messages"] = min_msgs
+            cfg["hot_take_probability"] = prob
+            cfg["hot_take_context_messages"] = ctx_msgs
+        await _edit_settings_panel(interaction, self._cog, self._session_id, interaction.user.id, guild_id)
+
+
+class HotTakeConfigButton(Button):
+    def __init__(self, session_id, cog, user_id):
+        super().__init__(label="🔥 Hot Take Config", style=discord.ButtonStyle.secondary, custom_id=f"settings_hotcfg_{session_id}")
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        guild_id = interaction.guild_id
+        async with self._cog.config.guild_from_id(guild_id).all() as cfg:
+            current = dict(cfg)
+        modal = HotTakeConfigModal(self._session_id, self._cog, current)
+        await interaction.response.send_modal(modal)
+
+
+class PageSelect(Select):
+    def __init__(self, session_id, cog, user_id, current_page):
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+        options = []
+        for key in PAGE_ORDER:
+            title, icon = PAGE_TITLES[key]
+            options.append(
+                discord.SelectOption(
+                    label=title, value=key, emoji=icon,
+                    default=key == current_page,
+                )
+            )
+        options.append(
+            discord.SelectOption(label="✖ Close", value="close")
+        )
+        super().__init__(
+            placeholder="Navigate to page...",
+            options=options,
+            custom_id=f"settings_pagesel_{session_id}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        value = self.values[0]
+        if value == "close":
+            self._cog.settings_sessions.pop(self._session_id, None)
+            await interaction.response.edit_message(
+                content=":white_check_mark: Settings closed.",
+                embed=None, view=None,
+            )
+            return
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        session["current_page"] = value
+        session["_last_accessed"] = time.time() * 1000
+        guild_id = interaction.guild_id
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
+
+
 class NavButton(Button):
     def __init__(self, label, action, session_id, cog, user_id):
         style = discord.ButtonStyle.danger if action == "close" else discord.ButtonStyle.secondary
-        super().__init__(label=label, style=style, custom_id=f"settings_{action}_{session_id}")
+        super().__init__(label=label, style=style, custom_id=f"settings_nav_{action}_{session_id}")
         self._action = action
         self._session_id = session_id
         self._cog = cog
@@ -456,7 +572,7 @@ class NavButton(Button):
     async def callback(self, interaction: discord.Interaction):
         session = self._cog.settings_sessions.get(self._session_id)
         if not session:
-            await interaction.response.send_message(":x: Session expired. Run /settings again.", ephemeral=True)
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
             return
         if self._action == "close":
             self._cog.settings_sessions.pop(self._session_id, None)
@@ -474,87 +590,31 @@ class NavButton(Button):
             results_embed, view = _build_test_results_embed(results, self._cog, self._session_id, self._user_id)
             await interaction.edit_original_response(embed=results_embed, view=view)
             return
-        page_index = PAGE_ORDER.index(session["current_page"])
-        if self._action == "next" and page_index < len(PAGE_ORDER) - 1:
-            session["current_page"] = PAGE_ORDER[page_index + 1]
-        elif self._action == "prev" and page_index > 0:
-            session["current_page"] = PAGE_ORDER[page_index - 1]
-        session["model_page"] = 0
-        session["show_model_dropdown"] = False
-        session["show_prompt_dropdown"] = False
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class ToggleModelDropdownButton(Button):
-    def __init__(self, session_id, cog, user_id):
-        super().__init__(label="🔍 Change Model", style=discord.ButtonStyle.primary, custom_id=f"settings_toggle_model_{session_id}")
-        self._session_id = session_id
-        self._cog = cog
-        self._user_id = user_id
-
-    async def callback(self, interaction: discord.Interaction):
-        session = self._cog.settings_sessions.get(self._session_id)
-        if not session:
-            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
-            return
-        session["show_model_dropdown"] = not session.get("show_model_dropdown", False)
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
 
 
 class ModelSelect(Select):
-    def __init__(self, session_id, cog, user_id, page=0):
+    def __init__(self, session_id, cog, user_id):
         self._session_id = session_id
         self._cog = cog
         self._user_id = user_id
-        self._page = page
-        models = self._load_models()
+        session = cog.settings_sessions.get(session_id, {})
+        models = session.get("models") or _load_models_sync(cog)
         model_ids = list(models.keys())
-        page_size = 25
-        start = page * page_size
-        end = start + page_size
-        page_ids = model_ids[start:end]
-        total_pages = max(1, (len(model_ids) + page_size - 1) // page_size)
         options = [
             discord.SelectOption(
                 label=m.get("name", mid)[:100],
                 value=mid,
                 description=m.get("provider", "unknown")[:100] or "unknown",
             )
-            for mid in page_ids for m in [models.get(mid, {})]
+            for mid in model_ids for m in [models.get(mid, {})]
         ]
         if not options:
             options = [discord.SelectOption(label="No models available", value="none")]
         super().__init__(
-            placeholder=f"Select a model... (Page {page + 1}/{total_pages})",
+            placeholder="Select model...",
             options=options[:25],
-            custom_id=f"settings_model_{session_id}_{page}",
+            custom_id=f"settings_model_{session_id}",
         )
-
-    def _load_models(self):
-        models = {}
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        try:
-            with open(config_path, "r") as f:
-                data = json.load(f)
-            models.update(data.get("MODELS", {}))
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-        for pid, info in PROVIDERS.items():
-            default = info.get("default_model", "")
-            if default and default not in models:
-                parts = default.split("/")
-                actual = parts[-1] if len(parts) > 1 else parts[0]
-                name = actual.replace("-", " ").title()
-                models[default] = {
-                    "name": f"{info['label']} - {name}",
-                    "provider": pid,
-                    "actualModelId": actual,
-                }
-        return models
 
     async def callback(self, interaction: discord.Interaction):
         model_id = self.values[0]
@@ -565,42 +625,7 @@ class ModelSelect(Select):
         async with self._cog.config.guild_from_id(guild_id).all() as cfg:
             cfg["model"] = model_id
         log.info("SETTINGS_UI Model updated to %s", model_id)
-        session = self._cog.settings_sessions.get(self._session_id)
-        if session:
-            session["show_model_dropdown"] = False
-        view = SettingsView(self._cog, self._session_id, self._user_id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class ModelPageButton(Button):
-    def __init__(self, label, direction, session_id, cog, user_id):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=f"settings_model_{direction}_{session_id}")
-        self._direction = direction
-        self._session_id = session_id
-        self._cog = cog
-        self._user_id = user_id
-
-    async def callback(self, interaction: discord.Interaction):
-        session = self._cog.settings_sessions.get(self._session_id)
-        if not session:
-            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
-            return
-        current = session.get("model_page", 0)
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        models = data.get("MODELS", {})
-        total_pages = max(1, (len(models) + 24) // 25)
-        if self._direction == "next" and current < total_pages - 1:
-            session["model_page"] = current + 1
-        elif self._direction == "prev" and current > 0:
-            session["model_page"] = current - 1
-        else:
-            await interaction.response.send_message("No more pages in that direction.", ephemeral=True)
-            return
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
 
 
 class ParamButton(Button):
@@ -649,17 +674,27 @@ class ApiKeySetModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         key = (self.children[0].value or "").strip()
-        if key:
-            await interaction.client.set_shared_api_tokens(self.provider, api_key=key)
-            text = f":white_check_mark: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key saved!"
-        else:
-            await interaction.client.set_shared_api_tokens(self.provider, api_key="")
-            text = f":wastebasket: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key cleared."
+        try:
+            if key:
+                await set_shared_api_key(interaction.client, self.provider, key)
+                text = f":white_check_mark: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key saved!"
+            else:
+                await set_shared_api_key(interaction.client, self.provider, "")
+                text = f":wastebasket: **{PROVIDER_LABELS.get(self.provider, self.provider)}** API key cleared."
+        except Exception as e:
+            log.error("SETTINGS_UI Failed to update API key for %s: %s", self.provider, e)
+            await interaction.response.send_message(":x: Failed to update API key. Check logs.", ephemeral=True)
+            return
         log.info("SETTINGS_UI API key updated for %s", self.provider)
         guild_id = interaction.guild_id
-        view = SettingsView(self.cog, self.session_id, interaction.user.id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(content=text, embed=embed, view=view)
+        await _edit_settings_panel(
+            interaction,
+            self.cog,
+            self.session_id,
+            interaction.user.id,
+            guild_id,
+            content=text,
+        )
 
 
 class ApiKeyButton(Button):
@@ -676,104 +711,37 @@ class ApiKeyButton(Button):
         await interaction.response.send_modal(modal)
 
 
-class TogglePromptDropdownButton(Button):
-    def __init__(self, session_id, cog, user_id):
-        super().__init__(label="\U0001f4dd Style", style=discord.ButtonStyle.primary, custom_id=f"settings_toggle_prompt_{session_id}")
-        self._session_id = session_id
-        self._cog = cog
-        self._user_id = user_id
-
-    async def callback(self, interaction: discord.Interaction):
-        session = self._cog.settings_sessions.get(self._session_id)
-        if not session:
-            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
-            return
-        session["show_prompt_dropdown"] = not session.get("show_prompt_dropdown", False)
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
 class PromptSelect(Select):
-    def __init__(self, session_id, cog, user_id, page=0):
+    def __init__(self, session_id, cog, user_id):
         self._session_id = session_id
         self._cog = cog
         self._user_id = user_id
-        self._page = page
-        personalities = self._load_personalities()
+        personalities = dict(cog.settings_sessions.get(session_id, {}).get("personalities", {}))
+        if not personalities:
+            personalities = dict(DEFAULT_PERSONALITIES)
         keys = list(personalities.keys())
-        page_size = 24
-        start = page * page_size
-        end = start + page_size
-        page_keys = keys[start:end]
-        total_pages = max(1, (len(keys) + page_size - 1) // page_size)
         options = [
-            discord.SelectOption(label=key.capitalize(), value=key)
-            for key in page_keys
+            discord.SelectOption(label=key.replace("_", " ").replace("-", " ").title(), value=key)
+            for key in keys
         ]
-        if page == max(0, total_pages - 1):
-            options.append(discord.SelectOption(label="✏️ Custom...", value="__custom__", description="Create a new style"))
+        options.append(discord.SelectOption(label="\u270f\ufe0f Custom...", value="__custom__", description="Create a new style"))
         super().__init__(
-            placeholder=f"Select a style... (Page {page + 1}/{total_pages})",
+            placeholder="Select style...",
             options=options[:25],
-            custom_id=f"settings_prompt_{session_id}_{page}",
+            custom_id=f"settings_prompt_{session_id}",
         )
-
-    def _load_personalities(self):
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        try:
-            with open(config_path, "r") as f:
-                data = json.load(f)
-            return data.get("PERSONALITIES", {})
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
         if selected == "__custom__":
-            modal = NewStyleModal(self._session_id, self._cog)
+            modal = AddStyleModal(self._session_id, self._cog)
             await interaction.response.send_modal(modal)
             return
         guild_id = interaction.guild_id
         async with self._cog.config.guild_from_id(guild_id).all() as cfg:
             cfg["promptKey"] = selected
         log.info("SETTINGS_UI Style set to %s", selected)
-        session = self._cog.settings_sessions.get(self._session_id)
-        if session:
-            session["show_prompt_dropdown"] = False
-        view = SettingsView(self._cog, self._session_id, self._user_id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class PromptPageButton(Button):
-    def __init__(self, label, direction, session_id, cog, user_id):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=f"settings_prompt_{direction}_{session_id}")
-        self._direction = direction
-        self._session_id = session_id
-        self._cog = cog
-        self._user_id = user_id
-
-    async def callback(self, interaction: discord.Interaction):
-        session = self._cog.settings_sessions.get(self._session_id)
-        if not session:
-            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
-            return
-        current = session.get("prompt_page", 0)
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        personalities = data.get("PERSONALITIES", {})
-        total_pages = max(1, (len(personalities) + 23) // 24)
-        if self._direction == "next" and current < total_pages - 1:
-            session["prompt_page"] = current + 1
-        elif self._direction == "prev" and current > 0:
-            session["prompt_page"] = current - 1
-        else:
-            await interaction.response.send_message("No more pages in that direction.", ephemeral=True)
-            return
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
 
 
 class FetchModeSelect(Select):
@@ -796,9 +764,7 @@ class FetchModeSelect(Select):
         async with self._cog.config.guild_from_id(guild_id).all() as cfg:
             cfg["messageFetchMode"] = mode
         log.info("SETTINGS_UI Fetch mode updated to %s", mode)
-        view = SettingsView(self._cog, self._session_id, self._user_id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
 
 
 class ToggleRandomButton(Button):
@@ -813,9 +779,7 @@ class ToggleRandomButton(Button):
         async with self._cog.config.guild_from_id(guild_id).all() as cfg:
             cfg["randomMode"] = not cfg.get("randomMode", False)
         log.info("SETTINGS_UI Random mode toggled")
-        view = SettingsView(self._cog, self._session_id, self._user_id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
 
 
 class TestEndpointsButton(Button):
@@ -853,10 +817,12 @@ class ResetButton(Button):
             log.error("Failed to reset settings: %s", e)
             await interaction.response.send_message(":x: Failed to reset settings.", ephemeral=True)
             return
+        session = self._cog.settings_sessions.get(self._session_id)
+        if session is not None:
+            session["working_order"] = list(PROVIDER_ORDER)
+            session.pop("selected_provider", None)
         log.info("SETTINGS_UI Settings reset to defaults")
-        view = SettingsView(self._cog, self._session_id, self._user_id, guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, guild_id)
 
 
 class AddStyleButton(Button):
@@ -871,9 +837,9 @@ class AddStyleButton(Button):
         await interaction.response.send_modal(modal)
 
 
-class StyleRemoveView(View):
-    def __init__(self, user_id, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class OwnerOnlyView(View):
+    def __init__(self, user_id, timeout=900):
+        super().__init__(timeout=timeout)
         self.user_id = user_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -903,17 +869,19 @@ class RemoveStyleSelect(Select):
             await interaction.response.send_message("No style selected.", ephemeral=True)
             return
         style_key = self.values[0]
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        personalities = data.get("PERSONALITIES", {})
-        if style_key in personalities:
-            del personalities[style_key]
-            data["PERSONALITIES"] = personalities
-            await _write_config_json(config_path, data)
-            log.info("SETTINGS_UI Style removed: %s", style_key)
-        view = SettingsView(self._cog, self._session_id, self._user_id, interaction.guild_id)
-        embed = await view.build_embed()
-        await interaction.response.edit_message(embed=embed, view=view)
+        guild_id = interaction.guild_id
+        async with self._cog.config.guild_from_id(guild_id).all() as cfg:
+            custom_personalities = dict(cfg.get("custom_personalities", {}))
+            if style_key in custom_personalities:
+                del custom_personalities[style_key]
+                cfg["custom_personalities"] = custom_personalities
+                if cfg.get("promptKey") == style_key:
+                    cfg["promptKey"] = "blunt" if "blunt" in DEFAULT_PERSONALITIES else next(iter(DEFAULT_PERSONALITIES))
+                session = self._cog.settings_sessions.get(self._session_id)
+                if session is not None:
+                    session["personalities"] = _merge_personalities(custom_personalities)
+                log.info("SETTINGS_UI Style removed: %s", style_key)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)
 
 
 class RemoveStyleButton(Button):
@@ -924,9 +892,146 @@ class RemoveStyleButton(Button):
         self._user_id = user_id
 
     async def callback(self, interaction: discord.Interaction):
-        config_path = os.path.join(self._cog.config_file_parent, "config", "config.json")
-        data = await _read_config_json(config_path)
-        personalities = data.get("PERSONALITIES", {})
-        view = StyleRemoveView(self._user_id, timeout=SESSION_TIMEOUT)
+        guild_id = interaction.guild_id
+        async with self._cog.config.guild_from_id(guild_id).all() as cfg:
+            personalities = {
+                key: value
+                for key, value in dict(cfg.get("custom_personalities", {})).items()
+                if key not in DEFAULT_PERSONALITIES
+            }
+        view = OwnerOnlyView(self._user_id, timeout=SESSION_TIMEOUT)
         view.add_item(RemoveStyleSelect(self._session_id, self._cog, self._user_id, personalities))
-        await interaction.response.edit_message(view=view)
+        embed = discord.Embed(
+            color=0x6366f1,
+            title=":wrench: Remove a Custom Roast Style",
+            description="Select a custom style to remove. Built-in styles are always available.",
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ProviderOrderSelect(Select):
+    def __init__(self, session_id, cog, user_id):
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+        session = cog.settings_sessions.get(session_id, {})
+        working = session.get("working_order", list(PROVIDER_ORDER))
+        options = []
+        for p in working:
+            label = PROVIDER_LABELS.get(p, p)
+            options.append(discord.SelectOption(
+                label=label, value=p,
+                description=f"Position {working.index(p) + 1}",
+            ))
+        super().__init__(
+            placeholder="Select a provider to move...",
+            options=options[:25] if options else [discord.SelectOption(label="None", value="none")],
+            custom_id=f"settings_ordsel_{session_id}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        session["selected_provider"] = self.values[0]
+        session.setdefault("working_order", list(PROVIDER_ORDER))
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)
+
+
+class MoveUpButton(Button):
+    def __init__(self, session_id, cog, user_id):
+        super().__init__(label="^ Move Up", style=discord.ButtonStyle.primary, custom_id=f"settings_mvup_{session_id}")
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        working = session.get("working_order", list(PROVIDER_ORDER))
+        selected = session.get("selected_provider")
+        if not selected or selected not in working:
+            await interaction.response.send_message(":x: Select a provider first.", ephemeral=True)
+            return
+        idx = working.index(selected)
+        if idx == 0:
+            await interaction.response.send_message(":x: Already at the top.", ephemeral=True)
+            return
+        working[idx], working[idx - 1] = working[idx - 1], working[idx]
+        session["working_order"] = working
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)
+
+
+class MoveDownButton(Button):
+    def __init__(self, session_id, cog, user_id):
+        super().__init__(label="v Move Down", style=discord.ButtonStyle.primary, custom_id=f"settings_mvdown_{session_id}")
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        working = session.get("working_order", list(PROVIDER_ORDER))
+        selected = session.get("selected_provider")
+        if not selected or selected not in working:
+            await interaction.response.send_message(":x: Select a provider first.", ephemeral=True)
+            return
+        idx = working.index(selected)
+        if idx == len(working) - 1:
+            await interaction.response.send_message(":x: Already at the bottom.", ephemeral=True)
+            return
+        working[idx], working[idx + 1] = working[idx + 1], working[idx]
+        session["working_order"] = working
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)
+
+
+class SaveOrderButton(Button):
+    def __init__(self, session_id, cog, user_id):
+        super().__init__(label="💾 Save Order", style=discord.ButtonStyle.success, custom_id=f"settings_saveord_{session_id}")
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        working = [p for p in session.get("working_order", list(PROVIDER_ORDER)) if p in PROVIDER_ORDER]
+        seen = set()
+        working = [p for p in working if not (p in seen or seen.add(p))]
+        for p in PROVIDER_ORDER:
+            if p not in seen:
+                working.append(p)
+                seen.add(p)
+        async with self._cog.config.guild_from_id(interaction.guild_id).all() as cfg:
+            cfg["provider_order"] = working
+        session.pop("selected_provider", None)
+        log.info("SETTINGS_UI Provider order saved: %s", working)
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)
+
+
+class ResetOrderButton(Button):
+    def __init__(self, session_id, cog, user_id):
+        super().__init__(label="↺ Reset to Default", style=discord.ButtonStyle.secondary, custom_id=f"settings_rstord_{session_id}")
+        self._session_id = session_id
+        self._cog = cog
+        self._user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        session = self._cog.settings_sessions.get(self._session_id)
+        if not session:
+            await interaction.response.send_message(":x: Session expired.", ephemeral=True)
+            return
+        async with self._cog.config.guild_from_id(interaction.guild_id).all() as cfg:
+            cfg["provider_order"] = None
+        session["working_order"] = list(PROVIDER_ORDER)
+        session.pop("selected_provider", None)
+        log.info("SETTINGS_UI Provider order reset to default")
+        await _edit_settings_panel(interaction, self._cog, self._session_id, self._user_id, interaction.guild_id)

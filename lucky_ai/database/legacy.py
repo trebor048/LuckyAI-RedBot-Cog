@@ -1,12 +1,11 @@
 import time
 import asyncio
+import os
 import aiosqlite
 import logging
-from typing import List, Optional
-
 from ..utils import generate_content_hash
 
-log = logging.getLogger("red.LuckyAICog.db")
+log = logging.getLogger("red.lucky_ai.db")
 
 
 class MessageDB:
@@ -17,13 +16,25 @@ class MessageDB:
 
     async def initialize(self):
         async with self._lock:
-            self._conn = await aiosqlite.connect(self.db_path)
-            self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode = WAL")
-            await self._conn.execute("PRAGMA synchronous = NORMAL")
-            await self._conn.execute("PRAGMA cache_size = -32000")
-            await self._conn.executescript("""
-                CREATE TABLE IF NOT EXISTS messages (
+            await self._init_locked()
+
+    async def _init_locked(self):
+        """Initialize DB connection. Must be called while holding self._lock."""
+        if self._conn is not None:
+            return
+        if self.db_path not in {":memory:", ""}:
+            db_dir = os.path.dirname(os.path.abspath(self.db_path))
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
+        self._conn = await aiosqlite.connect(self.db_path)
+        self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA journal_mode = WAL")
+        await self._conn.execute("PRAGMA synchronous = NORMAL")
+        await self._conn.execute("PRAGMA foreign_keys = ON")
+        await self._conn.execute("PRAGMA busy_timeout = 5000")
+        await self._conn.execute("PRAGMA cache_size = -32000")
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
                     author_id TEXT NOT NULL,
                     author_tag TEXT,
@@ -106,42 +117,43 @@ class MessageDB:
                     last_active TEXT
                 );
 
-                CREATE TABLE IF NOT EXISTS hot_take_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                );
-
                 CREATE INDEX IF NOT EXISTS idx_command_usage_guild ON command_usage(guild_id, timestamp);
-            """)
-            log.info("Message database initialized at %s", self.db_path)
+        """)
+        log.info("Message database initialized at %s", self.db_path)
 
     async def close(self):
         async with self._lock:
             if self._conn:
+                await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 await self._conn.close()
                 self._conn = None
 
     async def _ensure_open(self):
-        async with self._lock:
-            if self._conn is None:
-                await self.initialize()
+        if self._conn is None:
+            await self.initialize()
 
     async def save_message(self, msg):
         await self._ensure_open()
         if not msg or not msg.get("id"):
-            return
+            return False
         author = msg.get("author") or {}
         channel = msg.get("channel") or {}
         if not author.get("id") or not channel.get("id"):
-            return
+            return False
         guild_id = msg.get("guild_id")
         if not guild_id and isinstance(msg.get("guild"), dict):
             guild_id = msg["guild"].get("id")
         async with self._lock:
-            await self._conn.execute(
+            if self._conn is None:
+                await self._init_locked()
+            cursor = await self._conn.execute(
                 """INSERT OR REPLACE INTO messages
                    (id, author_id, author_tag, content, content_hash, timestamp, channel_id, guild_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM user_opt_outs
+                       WHERE user_id = ? AND guild_id = ? AND opted_out = 1
+                   )""",
                 (
                     msg["id"],
                     author.get("id"),
@@ -151,43 +163,78 @@ class MessageDB:
                     msg.get("timestamp") if msg.get("timestamp") is not None else int(time.time() * 1000),
                     channel.get("id"),
                     guild_id,
+                    author.get("id"),
+                    guild_id,
                 ),
             )
             await self._conn.commit()
+            return cursor.rowcount > 0
 
     async def save_message_batch(self, messages):
         await self._ensure_open()
         if not messages:
-            return
+            return 0
         async with self._lock:
-            for msg in messages:
-                author = msg.get("author", {})
-                channel = msg.get("channel", {})
-                guild_id = msg.get("guild_id")
-                if not guild_id and isinstance(msg.get("guild"), dict):
-                    guild_id = msg["guild"].get("id")
-                await self._conn.execute(
-                    """INSERT OR REPLACE INTO messages
-                       (id, author_id, author_tag, content, content_hash, timestamp, channel_id, guild_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        msg["id"],
-                        author.get("id"),
-                        author.get("tag") or author.get("name") or str(author.get("id", "")),
-                        msg.get("content") or "",
-                        generate_content_hash(msg.get("content")),
-                        msg.get("timestamp") if msg.get("timestamp") is not None else int(time.time() * 1000),
-                        channel.get("id"),
-                        guild_id,
-                    ),
-                )
-            await self._conn.commit()
+            if self._conn is None:
+                await self._init_locked()
+            inserted = 0
+            try:
+                for msg in messages:
+                    if not msg or not msg.get("id"):
+                        continue
+                    author = msg.get("author", {})
+                    channel = msg.get("channel", {})
+                    if not author.get("id") or not channel.get("id"):
+                        continue
+                    guild_id = msg.get("guild_id")
+                    if not guild_id and isinstance(msg.get("guild"), dict):
+                        guild_id = msg["guild"].get("id")
+                    cursor = await self._conn.execute(
+                        """INSERT OR REPLACE INTO messages
+                           (id, author_id, author_tag, content, content_hash, timestamp, channel_id, guild_id)
+                           SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                           WHERE NOT EXISTS (
+                               SELECT 1 FROM user_opt_outs
+                               WHERE user_id = ? AND guild_id = ? AND opted_out = 1
+                           )""",
+                        (
+                            msg["id"],
+                            author.get("id"),
+                            author.get("tag") or author.get("name") or str(author.get("id", "")),
+                            msg.get("content") or "",
+                            generate_content_hash(msg.get("content")),
+                            msg.get("timestamp") if msg.get("timestamp") is not None else int(time.time() * 1000),
+                            channel.get("id"),
+                            guild_id,
+                            author.get("id"),
+                            guild_id,
+                        ),
+                    )
+                    inserted += max(0, cursor.rowcount)
+                await self._conn.commit()
+                return inserted
+            except Exception:
+                await self._conn.rollback()
+                raise
 
     async def delete_message(self, message_id):
         await self._ensure_open()
         async with self._lock:
             await self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
             await self._conn.commit()
+
+    async def delete_messages(self, message_ids):
+        await self._ensure_open()
+        ids = [str(message_id) for message_id in message_ids or []]
+        if not ids:
+            return 0
+        async with self._lock:
+            cursor = await self._conn.executemany(
+                "DELETE FROM messages WHERE id = ?",
+                [(message_id,) for message_id in ids],
+            )
+            await self._conn.commit()
+            return max(0, cursor.rowcount)
 
     async def get_messages(self, user_id, limit=200, mode="random", guild_id=None):
         await self._ensure_open()
@@ -255,11 +302,19 @@ class MessageDB:
 
     async def get_channel_messages(self, channel_id, limit=200):
         await self._ensure_open()
-        limit = min(limit, 1000)
+        limit = max(1, min(int(limit), 1000))
         async with self._lock:
             cursor = await self._conn.execute(
                 """SELECT id, author_id, author_tag, content, timestamp, channel_id, guild_id
-                   FROM messages WHERE channel_id = ? ORDER BY timestamp DESC LIMIT ?""",
+                   FROM messages
+                   WHERE channel_id = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM user_opt_outs
+                         WHERE user_opt_outs.user_id = messages.author_id
+                           AND user_opt_outs.guild_id = messages.guild_id
+                           AND user_opt_outs.opted_out = 1
+                     )
+                   ORDER BY timestamp DESC LIMIT ?""",
                 (channel_id, limit),
             )
             rows = await cursor.fetchall()
@@ -283,7 +338,15 @@ class MessageDB:
                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)""",
                 (user_id, guild_id, 1 if opted_out else 0),
             )
+            deleted = 0
+            if opted_out:
+                cursor = await self._conn.execute(
+                    "DELETE FROM messages WHERE author_id = ? AND guild_id = ?",
+                    (user_id, guild_id),
+                )
+                deleted = max(0, cursor.rowcount)
             await self._conn.commit()
+            return deleted
 
     async def get_opt_out_user_ids(self, guild_id):
         await self._ensure_open()
@@ -339,15 +402,6 @@ class MessageDB:
                 "SELECT channel_id FROM guild_sync_status WHERE guild_id = ?", (guild_id,)
             )
             return [r[0] for r in await cursor.fetchall()]
-
-    async def is_channel_sync_enabled(self, guild_id, channel_id):
-        await self._ensure_open()
-        async with self._lock:
-            cursor = await self._conn.execute(
-                "SELECT 1 FROM guild_sync_status WHERE guild_id = ? AND channel_id = ?",
-                (guild_id, channel_id),
-            )
-            return bool(await cursor.fetchone())
 
     async def update_sync_status(self, guild_id, channel_id, last_message_id=None):
         await self._ensure_open()
@@ -425,7 +479,7 @@ class MessageDB:
         async with self._lock:
             await self._conn.execute(
                 """INSERT INTO users (id, roast_count, last_active) VALUES (?, 1, datetime('now'))
-                   ON CONFLICT(id) DO UPDATE SET roast_count = roast_count + 1""",
+                   ON CONFLICT(id) DO UPDATE SET roast_count = roast_count + 1, last_active = datetime('now')""",
                 (user_id,),
             )
             await self._conn.commit()
@@ -438,84 +492,47 @@ class MessageDB:
             )
             return [dict(r) for r in await cursor.fetchall()]
 
-    async def save_hot_take_enabled(self, enabled):
-        await self._ensure_open()
-        async with self._lock:
-            await self._conn.execute(
-                "INSERT OR REPLACE INTO hot_take_state (key, value) VALUES ('enabled', ?)",
-                ("1" if enabled else "0",),
-            )
-            await self._conn.commit()
-
-    async def get_hot_take_enabled(self):
-        await self._ensure_open()
-        async with self._lock:
-            cursor = await self._conn.execute(
-                "SELECT value FROM hot_take_state WHERE key = 'enabled'", ()
-            )
-            row = await cursor.fetchone()
-            if row is None:
-                return None
-            return row[0] == "1"
-
     async def get_database_stats(self):
         await self._ensure_open()
         async with self._lock:
-            msg_c = await self._conn.execute("SELECT COUNT(*) as cnt FROM messages")
-            guild_c = await self._conn.execute("SELECT COUNT(DISTINCT guild_id) as cnt FROM messages")
-            user_c = await self._conn.execute("SELECT COUNT(DISTINCT author_id) as cnt FROM messages")
-            users_c = await self._conn.execute("SELECT COUNT(*) as cnt FROM users")
-            users_row = await users_c.fetchone()
-            msg_row = await msg_c.fetchone()
-            guild_row = await guild_c.fetchone()
-            author_row = await user_c.fetchone()
+            msg_row = await (await self._conn.execute("SELECT COUNT(*) as cnt FROM messages")).fetchone()
+            guild_row = await (await self._conn.execute("SELECT COUNT(DISTINCT guild_id) as cnt FROM messages")).fetchone()
+            author_row = await (await self._conn.execute("SELECT COUNT(DISTINCT author_id) as cnt FROM messages")).fetchone()
             return {
                 "total_messages": msg_row[0] if msg_row else 0,
                 "total_guilds": guild_row[0] if guild_row else 0,
-                "total_users": (author_row[0] if author_row else 0) or (users_row[0] if users_row else 0),
+                "total_users": author_row[0] if author_row else 0,
             }
 
-    # ============== MISSING METHODS ==============
-
-    async def get_sync_logs(self, guild_id: str) -> List[dict]:
-        """Get recent sync operation logs."""
+    async def delete_user_data(self, user_id):
+        """Delete all stored data directly associated with one Discord user ID."""
         await self._ensure_open()
+        user_id = str(user_id)
         async with self._lock:
-            cursor = await self._conn.execute(
-                "SELECT * FROM guild_sync_logs WHERE guild_id = ? ORDER BY id DESC LIMIT 50",
-                (guild_id,),
-            )
-            return [dict(r) for r in await cursor.fetchall()]
+            try:
+                deleted = {}
+                cursor = await self._conn.execute("DELETE FROM messages WHERE author_id = ?", (user_id,))
+                deleted["messages.author_id"] = max(0, cursor.rowcount)
 
-    async def get_recent_hot_takes(self, guild_id: str, limit: int = 10) -> List[dict]:
-        """Get recent hot takes for a guild."""
-        await self._ensure_open()
-        async with self._lock:
-            cursor = await self._conn.execute(
-                """SELECT id, channel_id, generated_at, roast_text, trigger_message_count, model_used, latency_ms
-                   FROM hot_takes WHERE guild_id = ? ORDER BY generated_at DESC LIMIT ?""",
-                (guild_id, min(limit, 100)),
-            )
-            return [dict(r) for r in await cursor.fetchall()]
+                cursor = await self._conn.execute("DELETE FROM user_opt_outs WHERE user_id = ?", (user_id,))
+                deleted["user_opt_outs.user_id"] = max(0, cursor.rowcount)
 
-    async def is_duplicate_content(self, user_id: str, content: str) -> bool:
-        """Check if message content already exists (for duplicate detection)."""
-        await self._ensure_open()
-        hash_val = generate_content_hash(content)
-        async with self._lock:
-            cursor = await self._conn.execute(
-                "SELECT 1 FROM messages WHERE author_id = ? AND content_hash = ? LIMIT 1",
-                (user_id, hash_val),
-            )
-            return bool(await cursor.fetchone())
+                cursor = await self._conn.execute("DELETE FROM guild_blacklist WHERE user_id = ?", (user_id,))
+                deleted["guild_blacklist.user_id"] = max(0, cursor.rowcount)
 
-    async def update_last_active(self, user_id: str) -> None:
-        """Update user's last active timestamp."""
-        await self._ensure_open()
-        async with self._lock:
-            await self._conn.execute(
-                """INSERT INTO users (id, last_active) VALUES (?, datetime('now'))
-                   ON CONFLICT(id) DO UPDATE SET last_active = excluded.last_active""",
-                (user_id,),
-            )
-            await self._conn.commit()
+                cursor = await self._conn.execute("UPDATE guild_blacklist SET added_by = NULL WHERE added_by = ?", (user_id,))
+                deleted["guild_blacklist.added_by"] = max(0, cursor.rowcount)
+
+                cursor = await self._conn.execute("UPDATE guild_sync_logs SET triggered_by = NULL WHERE triggered_by = ?", (user_id,))
+                deleted["guild_sync_logs.triggered_by"] = max(0, cursor.rowcount)
+
+                cursor = await self._conn.execute("DELETE FROM command_usage WHERE user_id = ?", (user_id,))
+                deleted["command_usage.user_id"] = max(0, cursor.rowcount)
+
+                cursor = await self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                deleted["users.id"] = max(0, cursor.rowcount)
+                await self._conn.commit()
+                return deleted
+            except Exception:
+                await self._conn.rollback()
+                raise
